@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { Pool } from "pg";
 import type { Workout } from "@runcoach/types";
-import { createWorkout } from "./db.js";
+import { upsertImportedWorkout } from "./db.js";
 
 const getEncryptionKey = () =>
   createHash("sha256")
@@ -46,7 +46,23 @@ type StravaActivity = {
   distance: number;
   average_heartrate?: number;
   max_heartrate?: number;
+  workout_type?: number;
 };
+
+function mapStravaWorkoutType(activity: StravaActivity): Workout["type"] {
+  const name = activity.name.toLowerCase();
+  if (activity.workout_type === 1 || name.includes("race")) return "race";
+  if (activity.workout_type === 2 || name.includes("long run") || name.includes("long")) {
+    return "long";
+  }
+  if (/interval|repeat|fartlek|track|400m|800m|1k\b|hill repeat/.test(name)) {
+    return "interval";
+  }
+  if (/tempo|threshold|progression|cruise/.test(name)) return "tempo";
+  if (/recovery|regeneration/.test(name)) return "recovery";
+  if (activity.workout_type === 3) return "tempo";
+  return "easy";
+}
 
 export async function initializeStravaDatabase(pool: Pool) {
   await pool.query(`
@@ -131,6 +147,10 @@ export async function hasStravaConnection(pool: Pool, userId: string) {
   return result.rowCount === 1;
 }
 
+export async function deleteStravaConnection(pool: Pool, userId: string) {
+  await pool.query("DELETE FROM strava_connections WHERE user_id = $1", [userId]);
+}
+
 export async function syncStravaActivities(pool: Pool, userId: string) {
   const accessToken = await getAccessToken(pool, userId);
   if (!accessToken) throw new Error("Strava account is not connected");
@@ -139,6 +159,10 @@ export async function syncStravaActivities(pool: Pool, userId: string) {
     "https://www.strava.com/api/v3/athlete/activities?per_page=100",
     { headers: { Authorization: `Bearer ${accessToken}` } },
   );
+  if (response.status === 401) {
+    await deleteStravaConnection(pool, userId);
+    throw new Error("Strava authorization expired; reconnect your Strava account");
+  }
   if (!response.ok) throw new Error(`Strava activities returned ${response.status}`);
   const activities = (await response.json()) as StravaActivity[];
   let imported = 0;
@@ -152,7 +176,7 @@ export async function syncStravaActivities(pool: Pool, userId: string) {
       date: activity.start_date_local.slice(0, 10),
       startTime: activity.start_date_local.slice(11, 16),
       title: activity.name,
-      type: "easy",
+      type: mapStravaWorkoutType(activity),
       durationMinutes: Math.max(1, Math.round(activity.elapsed_time / 60)),
       distanceKm: Number((activity.distance / 1000).toFixed(2)),
       averageHeartRate: activity.average_heartrate,
@@ -163,7 +187,7 @@ export async function syncStravaActivities(pool: Pool, userId: string) {
       completed: true,
       tags: ["strava"],
     };
-    await createWorkout(workout, userId);
+    await upsertImportedWorkout(workout, userId);
     imported += 1;
   }
 

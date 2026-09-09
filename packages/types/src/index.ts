@@ -41,11 +41,20 @@ export interface ChatMessage {
 
 export interface ChatRequest {
   question: string;
+  selectedCoaches: string[];
+  trainingHistory?: Workout[];
+}
+
+export interface ChatSource {
+  coach: string;
+  title: string;
+  url: string;
 }
 
 export interface ChatResponse {
   answer: string;
-  sources: string[];
+  sources: ChatSource[];
+  generationMode: "local_llm" | "knowledge_fallback";
 }
 
 export interface WorkoutDetails {

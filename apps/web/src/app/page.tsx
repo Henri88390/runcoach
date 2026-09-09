@@ -48,6 +48,8 @@ type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+  sources?: { coach: string; title: string; url: string }[];
+  generationMode?: "local_llm" | "knowledge_fallback";
 };
 
 type User = {
@@ -78,6 +80,14 @@ const initialMessages: ChatMessage[] = [
   },
 ];
 
+const suggestedQuestions = [
+  "How many kilometers per week should I run based on my recent training?",
+  "What should my next week's training focus be?",
+  "How can I increase my mileage while reducing injury risk?",
+  "Is my current balance of easy and hard workouts appropriate?",
+  "What should I do if I feel unusually tired during this training block?",
+];
+
 const formatDistance = (distanceKm: number) =>
   `${distanceKm.toLocaleString("fr-FR", {
     minimumFractionDigits: 2,
@@ -91,6 +101,28 @@ const formatDuration = (totalMinutes: number) => {
   if (hours === 0) return `${minutes}min`;
   return `${hours}h${String(minutes).padStart(2, "0")}min`;
 };
+
+const renderCitedAnswer = (content: string, sources: ChatMessage["sources"]) =>
+  content.split(/(\[\d+\])/g).map((part, index) => {
+    const citation = /^\[(\d+)\]$/.exec(part);
+    const sourceIndex = citation ? Number(citation[1]) - 1 : -1;
+    const source = sources?.[sourceIndex];
+
+    if (!source) return <span key={index}>{part}</span>;
+
+    return (
+      <a
+        key={index}
+        className="chat-citation"
+        href={source.url}
+        target="_blank"
+        rel="noreferrer"
+        title={`${source.coach}: ${source.title}`}
+      >
+        {part}
+      </a>
+    );
+  });
 
 export default function HomePage() {
   const [weekly, setWeekly] = useState<WeeklyWorkoutSummary[]>([]);
@@ -108,6 +140,8 @@ export default function HomePage() {
   const [isStravaLoading, setIsStravaLoading] = useState(false);
   const [stravaMessage, setStravaMessage] = useState("");
   const [question, setQuestion] = useState("");
+  const [coaches, setCoaches] = useState<string[]>([]);
+  const [selectedCoaches, setSelectedCoaches] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [visibleMetrics, setVisibleMetrics] = useState({
     distance: true,
@@ -138,6 +172,15 @@ export default function HomePage() {
       const payload = await response.json();
       setUser(payload.data ?? null);
       setIsAuthOpen(!payload.data);
+      const stravaResult = new URLSearchParams(window.location.search).get(
+        "strava",
+      );
+      if (stravaResult === "error") {
+        setStravaMessage(
+          "Strava connection failed. Please connect your Strava account again.",
+        );
+        window.history.replaceState({}, "", window.location.pathname);
+      }
     };
 
     loadSession();
@@ -168,8 +211,17 @@ export default function HomePage() {
       setIsStravaConnected(payload.data?.connected ?? false);
     };
 
+    const fetchCoaches = async () => {
+      const response = await apiFetch("/chat/coaches");
+      const payload = await response.json();
+      if (cancelled || !response.ok) return;
+      setCoaches(payload.data ?? []);
+      setSelectedCoaches(payload.data ?? []);
+    };
+
     void fetchWorkouts();
     void fetchStravaStatus();
+    void fetchCoaches();
 
     return () => {
       cancelled = true;
@@ -187,7 +239,12 @@ export default function HomePage() {
     try {
       const response = await apiFetch("/strava/sync", { method: "POST" });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message);
+      if (!response.ok) {
+        if (payload.message?.includes("authorization expired")) {
+          setIsStravaConnected(false);
+        }
+        throw new Error(payload.message);
+      }
       setStravaMessage(`${payload.data.imported} Strava workouts synchronized`);
 
       const weeklyResponse = await apiFetch("/workouts/weekly");
@@ -195,6 +252,12 @@ export default function HomePage() {
       setWeekly(weeklyPayload.data ?? []);
       setSelectedWorkout(weeklyPayload.data?.[0]?.workouts?.[0] ?? null);
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("authorization expired")
+      ) {
+        setIsStravaConnected(false);
+      }
       setStravaMessage(
         error instanceof Error
           ? error.message
@@ -294,7 +357,11 @@ export default function HomePage() {
       const response = await apiFetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed }),
+        body: JSON.stringify({
+          question: trimmed,
+          selectedCoaches,
+          trainingHistory: weekly.flatMap((week) => week.workouts),
+        }),
       });
 
       const payload = await response.json();
@@ -306,6 +373,8 @@ export default function HomePage() {
         role: "assistant",
         content: payload.data?.answer ?? "No answer returned yet.",
         timestamp: new Date().toISOString(),
+        sources: payload.data?.sources ?? [],
+        generationMode: payload.data?.generationMode,
       };
 
       setChatMessages((prev) => [...prev, assistantMessage]);
@@ -410,21 +479,29 @@ export default function HomePage() {
         <header className="topbar">
           <div>
             <div className="brand">RunCoach AI</div>
-            <div className="subtle">Strava-inspired weekly training view</div>
           </div>
           <div className="header-actions">
             {user ? (
               <>
                 <span className="user-greeting">{user.name}</span>
-                <button
-                  className="button secondary"
-                  onClick={onSynchronizeStrava}
-                  disabled={isStravaLoading}
-                >
-                  {isStravaLoading
-                    ? "Synchronizing..."
-                    : "Synchronize Strava account"}
-                </button>
+                {isStravaConnected ? (
+                  <button
+                    className="button secondary"
+                    onClick={onSynchronizeStrava}
+                    disabled={isStravaLoading}
+                  >
+                    {isStravaLoading
+                      ? "Synchronizing..."
+                      : "Synchronize Strava account"}
+                  </button>
+                ) : (
+                  <a
+                    className="button secondary"
+                    href={`${API_BASE}/strava/connect`}
+                  >
+                    Connect Strava account
+                  </a>
+                )}
                 <button className="button secondary" onClick={onLogout}>
                   Log out
                 </button>
@@ -869,6 +946,44 @@ export default function HomePage() {
 
           <div className="panel chat-panel">
             <h2 style={{ marginTop: 0 }}>Coach chat</h2>
+            <fieldset className="coach-filter">
+              <legend>Answer from</legend>
+              {coaches.map((coach) => (
+                <label key={coach}>
+                  <input
+                    type="checkbox"
+                    checked={selectedCoaches.includes(coach)}
+                    disabled={
+                      selectedCoaches.length === 1 &&
+                      selectedCoaches.includes(coach)
+                    }
+                    onChange={(event) =>
+                      setSelectedCoaches((current) =>
+                        event.target.checked
+                          ? [...current, coach]
+                          : current.filter((item) => item !== coach),
+                      )
+                    }
+                  />
+                  {coach}
+                </label>
+              ))}
+            </fieldset>
+            <div className="chat-suggestions" aria-label="Suggested questions">
+              <span className="chat-suggestions-label">Try asking</span>
+              <div className="chat-suggestion-list">
+                {suggestedQuestions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    className="chat-suggestion"
+                    type="button"
+                    onClick={() => setQuestion(suggestion)}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="chat-box">
               <div className="chat-history">
                 {chatMessages.map((message) => (
@@ -876,7 +991,31 @@ export default function HomePage() {
                     key={message.id}
                     className={`chat-message ${message.role}`}
                   >
-                    {message.content}
+                    {message.role === "assistant"
+                      ? renderCitedAnswer(message.content, message.sources)
+                      : message.content}
+                    {message.role === "assistant" && message.generationMode && (
+                      <div className="chat-generation-mode">
+                        {message.generationMode === "local_llm"
+                          ? "Generated by local LLM"
+                          : "Grounded knowledge fallback"}
+                      </div>
+                    )}
+                    {message.role === "assistant" && message.sources?.length ? (
+                      <div className="chat-sources">
+                        <strong>Sources</strong>
+                        {message.sources.map((source) => (
+                          <a
+                            key={`${message.id}-${source.url}`}
+                            href={source.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {source.coach}: {source.title}
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
                 {isLoading && (

@@ -128,6 +128,10 @@ export async function revokeSession(pool: Pool, token?: string) {
   }
 }
 
+export async function revokeUserSessions(pool: Pool, userId: string) {
+  await pool.query("DELETE FROM sessions WHERE user_id = $1", [userId]);
+}
+
 export async function createMagicLink(pool: Pool, email: string) {
   const token = randomBytes(32).toString("base64url");
   const client = await pool.connect();
@@ -231,14 +235,18 @@ export async function createStravaOAuthState(pool: Pool, userId: string) {
   return state;
 }
 
-export async function consumeStravaOAuthState(pool: Pool, state: string) {
+export async function consumeStravaOAuthState(
+  pool: Pool,
+  state: string,
+  expectedUserId: string,
+) {
   const result = await pool.query<{ user_id: string }>(
     `
       DELETE FROM strava_oauth_states
-      WHERE state_hash = $1 AND expires_at > NOW()
+      WHERE state_hash = $1 AND user_id = $2 AND expires_at > NOW()
       RETURNING user_id
     `,
-    [hashToken(state)],
+    [hashToken(state), expectedUserId],
   );
   return result.rows[0]?.user_id;
 }

@@ -32,6 +32,7 @@ import {
   findUserBySession,
   initializeAuthDatabase,
   revokeSession,
+  revokeUserSessions,
   SESSION_COOKIE,
   consumeStravaOAuthState,
   type AuthUser,
@@ -39,6 +40,7 @@ import {
 import {
   hasStravaConnection,
   initializeStravaDatabase,
+  deleteStravaConnection,
   saveStravaConnection,
   syncStravaActivities,
 } from "./strava.js";
@@ -68,6 +70,13 @@ const setSessionCookie = (response: Response, token: string) => {
   response.setHeader(
     "Set-Cookie",
     `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 24 * 60 * 60}${process.env.NODE_ENV === "production" ? "; Secure" : ""}`,
+  );
+};
+
+const clearSessionCookie = (response: Response) => {
+  response.setHeader(
+    "Set-Cookie",
+    `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${process.env.NODE_ENV === "production" ? "; Secure" : ""}`,
   );
 };
 
@@ -135,6 +144,7 @@ app.get("/auth/email/verify", async (request: Request, response: Response) => {
       });
     return;
   }
+  await deleteStravaConnection(pool, user.id);
   setSessionCookie(response, await createSession(pool, user.id));
   response.redirect(process.env.WEB_URL ?? "http://localhost:3000");
 });
@@ -206,17 +216,23 @@ app.get(
       name: profile.name,
       avatarUrl: profile.picture,
     });
+    await deleteStravaConnection(pool, user.id);
     setSessionCookie(response, await createSession(pool, user.id));
     response.redirect(process.env.WEB_URL ?? "http://localhost:3000");
   },
 );
 
 app.post("/auth/logout", async (request: Request, response: Response) => {
-  await revokeSession(pool, readCookie(request, SESSION_COOKIE));
-  response.setHeader(
-    "Set-Cookie",
-    `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
-  );
+  const sessionToken = readCookie(request, SESSION_COOKIE);
+  const user = await findUserBySession(pool, sessionToken);
+  if (user) {
+    await deleteStravaConnection(pool, user.id);
+    await revokeUserSessions(pool, user.id);
+  } else {
+    await revokeSession(pool, sessionToken);
+  }
+  clearSessionCookie(response);
+  response.setHeader("Cache-Control", "no-store");
   response.json({ success: true, data: null });
 });
 
@@ -234,7 +250,7 @@ app.get(
       client_id: process.env.STRAVA_CLIENT_ID,
       redirect_uri: redirectUri,
       response_type: "code",
-      approval_prompt: "auto",
+      approval_prompt: "force",
       scope: "read,activity:read_all",
       state,
     });
@@ -245,7 +261,14 @@ app.get(
 app.get("/strava/callback", async (request: Request, response: Response) => {
   const code = typeof request.query.code === "string" ? request.query.code : "";
   const state = typeof request.query.state === "string" ? request.query.state : "";
-  const userId = state ? await consumeStravaOAuthState(pool, state) : undefined;
+  const currentUser = await findUserBySession(
+    pool,
+    readCookie(request, SESSION_COOKIE),
+  );
+  const userId =
+    state && currentUser
+      ? await consumeStravaOAuthState(pool, state, currentUser.id)
+      : undefined;
   if (!code || !userId) {
     response.status(400).send("Invalid Strava OAuth response");
     return;
@@ -274,7 +297,17 @@ app.get("/strava/callback", async (request: Request, response: Response) => {
     athlete?: { id: number };
   };
   await saveStravaConnection(pool, userId, tokens);
-  response.redirect(process.env.WEB_URL ?? "http://localhost:3000");
+  try {
+    await syncStravaActivities(pool, userId);
+  } catch (error) {
+    console.error("Initial Strava synchronization failed:", error);
+    await deleteStravaConnection(pool, userId);
+    response.redirect(
+      `${process.env.WEB_URL ?? "http://localhost:3000"}?strava=error`,
+    );
+    return;
+  }
+  response.redirect(`${process.env.WEB_URL ?? "http://localhost:3000"}?strava=connected`);
 });
 
 app.get(
@@ -297,7 +330,8 @@ app.post(
       response.json({ success: true, data: { imported }, message: "Strava workouts synchronized" });
     } catch (error) {
       console.error("Failed to synchronize Strava activities:", error);
-      response.status(502).json({ success: false, data: null, message: "Strava synchronization failed" });
+      const message = error instanceof Error ? error.message : "Strava synchronization failed";
+      response.status(502).json({ success: false, data: null, message });
     }
   },
 );
@@ -468,19 +502,28 @@ app.post(
     if (!question) {
       res.status(400).json({
         success: false,
-        data: { answer: "Please provide a questions.", sources: [] },
+        data: {
+          answer: "Please provide a questions.",
+          sources: [],
+          generationMode: "knowledge_fallback",
+        },
         message: "Question is required",
       });
       return;
     }
 
     try {
+      const trainingHistory = (await listWorkouts(req.user!.id)).slice(0, 28);
       const aiResponse = await fetch(
         `${process.env.AI_SERVICE_URL ?? "http://localhost:8000"}/chat`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question }),
+          body: JSON.stringify({
+            question,
+            selected_coaches: req.body?.selectedCoaches ?? [],
+            training_history: trainingHistory,
+          }),
         },
       );
 
@@ -488,18 +531,50 @@ app.post(
         throw new Error(`AI service returned ${aiResponse.status}`);
       }
 
-      const answer = (await aiResponse.json()) as ChatResponse;
+      const aiAnswer = (await aiResponse.json()) as ChatResponse & {
+        generation_mode?: ChatResponse["generationMode"];
+      };
       res.json({
         success: true,
-        data: answer,
+        data: {
+          answer: aiAnswer.answer,
+          sources: aiAnswer.sources,
+          generationMode:
+            aiAnswer.generationMode ?? aiAnswer.generation_mode ?? "knowledge_fallback",
+        },
         message: "Coach answer generated",
       });
     } catch (error) {
       console.error("Failed to call AI service:", error);
       res.status(503).json({
         success: false,
-        data: { answer: "", sources: [] },
+        data: {
+          answer: "",
+          sources: [],
+          generationMode: "knowledge_fallback",
+        },
         message: "AI service is unavailable",
+      });
+    }
+  },
+);
+
+app.get(
+  "/chat/coaches",
+  authenticate,
+  async (_req: AuthenticatedRequest, res: Response) => {
+    try {
+      const coachesResponse = await fetch(
+        `${process.env.AI_SERVICE_URL ?? "http://localhost:8000"}/coaches`,
+      );
+      if (!coachesResponse.ok) throw new Error("Coach list request failed");
+      res.json({ success: true, data: await coachesResponse.json() });
+    } catch (error) {
+      console.error("Failed to load coach sources:", error);
+      res.status(503).json({
+        success: false,
+        data: [],
+        message: "Coach sources are unavailable",
       });
     }
   },
@@ -589,7 +664,8 @@ function generateAiAnswer(question: string): ChatResponse {
     return {
       answer:
         "For interval work, keep the reps controlled and maintain a steady rhythm. The classic approach is to stay at a hard but repeatable effort with quality recoveries, and avoid losing form in the final reps. A good range is 6-10 min total of quality work in a session, depending on the athlete and phase of training.",
-      sources: ["Marius Bakken", "Jack Daniels"],
+      sources: [],
+      generationMode: "knowledge_fallback",
     };
   }
 
@@ -597,7 +673,8 @@ function generateAiAnswer(question: string): ChatResponse {
     return {
       answer:
         "Long runs should be mostly aerobic and conversational. The goal is to build durability, not to turn every session into a race. Keep the effort steady and let the final section drift slightly faster only if the legs feel good.",
-      sources: ["Renato Canova", "Marius Bakken"],
+      sources: [],
+      generationMode: "knowledge_fallback",
     };
   }
 
@@ -605,14 +682,16 @@ function generateAiAnswer(question: string): ChatResponse {
     return {
       answer:
         "Easy and recovery runs are where quality aerobic development happens. Stay relaxed, keep the effort low, and let the body absorb the harder work. If pace is slow but effort stays light, the session is doing its job.",
-      sources: ["Jack Daniels", "Marius Bakken"],
+      sources: [],
+      generationMode: "knowledge_fallback",
     };
   }
 
   return {
     answer:
       "A sensible approach is to base the plan on two to three quality sessions per week, keep most mileage easy, and make sure the hard sessions are repeatable. Consistency and recovery matter more than chasing a single maximal workout.",
-    sources: ["Renato Canova", "Jack Daniels"],
+    sources: [],
+    generationMode: "knowledge_fallback",
   };
 }
 

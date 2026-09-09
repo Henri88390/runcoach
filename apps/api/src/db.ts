@@ -194,6 +194,49 @@ export async function createWorkout(workout: Workout, userId: string) {
   }
 }
 
+export async function upsertImportedWorkout(workout: Workout, userId: string) {
+  await pool.query(
+    `
+      INSERT INTO workouts (
+        id, user_id, date, start_time, title, type, duration_minutes, distance_km,
+        average_heart_rate, max_heart_rate, effort, notes, source,
+        completed, tags
+      )
+      VALUES ($1, $2, $3::date, $4::time, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ON CONFLICT (id) DO UPDATE SET
+        date = EXCLUDED.date,
+        start_time = EXCLUDED.start_time,
+        title = EXCLUDED.title,
+        type = EXCLUDED.type,
+        duration_minutes = EXCLUDED.duration_minutes,
+        distance_km = EXCLUDED.distance_km,
+        average_heart_rate = EXCLUDED.average_heart_rate,
+        max_heart_rate = EXCLUDED.max_heart_rate,
+        effort = EXCLUDED.effort,
+        notes = EXCLUDED.notes,
+        tags = EXCLUDED.tags
+      WHERE workouts.user_id = EXCLUDED.user_id
+    `,
+    [
+      workout.id,
+      userId,
+      workout.date,
+      workout.startTime ?? "07:00",
+      workout.title,
+      workout.type,
+      workout.durationMinutes,
+      workout.distanceKm ?? null,
+      workout.averageHeartRate ?? null,
+      workout.maxHeartRate ?? null,
+      workout.effort,
+      workout.notes ?? null,
+      workout.source,
+      workout.completed,
+      workout.tags ?? [],
+    ],
+  );
+}
+
 export async function deleteWorkout(id: string, userId: string) {
   const result = await pool.query(
     "DELETE FROM workouts WHERE id = $1 AND user_id = $2",
