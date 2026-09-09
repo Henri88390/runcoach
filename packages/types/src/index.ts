@@ -39,10 +39,13 @@ export interface ChatMessage {
   timestamp: string;
 }
 
+export type ModelProvider = "local" | "openai";
+
 export interface ChatRequest {
   question: string;
   selectedCoaches: string[];
   trainingHistory?: Workout[];
+  modelProvider?: ModelProvider;
 }
 
 export interface ChatSource {
@@ -54,7 +57,13 @@ export interface ChatSource {
 export interface ChatResponse {
   answer: string;
   sources: ChatSource[];
-  generationMode: "local_llm" | "knowledge_fallback";
+  generationMode: "local_llm" | "knowledge_fallback" | "openai";
+}
+
+export interface ChatProvider {
+  id: ModelProvider;
+  label: string;
+  available: boolean;
 }
 
 export interface WorkoutDetails {

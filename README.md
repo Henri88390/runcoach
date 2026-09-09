@@ -31,13 +31,57 @@ training workflow below instead of importing PyTorch from the host `.venv`.
 
 ### Local coach model
 
-Coach chat uses a local open-weight model and a LoRA adapter. It does not call
-OpenAI or another hosted LLM API. `train.py` uses the source-linked SQLite coach
-knowledge database to train the adapter, while chat retrieval still limits each
-answer to the selected coaches and returns citations. The default base model is
-`Qwen/Qwen2.5-0.5B-Instruct`; set `LOCAL_MODEL_NAME` to use another compatible
-Hugging Face causal language model. Set `LOCAL_ADAPTER_PATH` to change where the
-trained adapter is saved and loaded.
+Coach chat uses a local open-weight model and a LoRA adapter by default. `train.py`
+uses the source-linked SQLite coach knowledge database to train the adapter,
+while chat retrieval still limits each answer to the selected coaches and
+returns citations. The default base model is `Qwen/Qwen2.5-0.5B-Instruct`; set
+`LOCAL_MODEL_NAME` to use another compatible Hugging Face causal language model.
+Set `LOCAL_ADAPTER_PATH` to change where the trained adapter is saved and loaded.
+
+### OpenAI provider (optional)
+
+Coach chat can also answer using the OpenAI API instead of the local model. The
+chat panel shows a friendly "Local model" / "OpenAI" selector, backed by
+`GET /chat/providers`, which the AI service reports as available only when an
+OpenAI key is configured. Both providers reuse the same coach knowledge
+retrieval and citations; only the generation step changes.
+
+To enable it:
+
+1. Add `OPENAI_API_KEY` and `OPENAI_MODEL` to the single `.env` file in the
+   repository root (next to `docker-compose.yml`; it is git-ignored, copy it
+   from `.env.example` if it does not exist yet). The API server and Docker
+   Compose both read this one file:
+
+   ```env
+   OPENAI_API_KEY=sk-...
+   OPENAI_MODEL=gpt-4o-mini
+   ```
+
+   Docker Compose automatically loads this file and substitutes
+   `${OPENAI_API_KEY:-}` / `${OPENAI_MODEL:-gpt-4o-mini}` in `docker-compose.yml`.
+   If you run the AI service directly with uvicorn instead of Docker, export the
+   same variables in that shell before starting it.
+
+2. Rebuild and recreate the `ai-service` container so it picks up the new
+   `openai` dependency and code, plus the new environment variables:
+
+   ```powershell
+   docker compose up -d --build ai-service
+   ```
+
+   An env-only change still requires this rebuild here because the Dockerfile
+   copies the service source into the image; env vars alone are not enough
+   until the image also contains the OpenAI integration code.
+
+3. Confirm it is available:
+
+   ```powershell
+   Invoke-WebRequest http://localhost:8000/providers
+   ```
+
+   `openai` should report `"available": true`. Selecting it in the chat UI sets
+   `generationMode: "openai"` on responses instead of `local_llm`.
 
 #### How the local LLM works
 
@@ -192,6 +236,20 @@ downloads across developer machines.
    resumes from the newest checkpoint. Use the clean reset command above when
    the dataset or training code has changed substantially.
 
+   `ai-trainer` is a one-off job, not a long-running service, so there is
+   nothing to "restart" — rerunning the same command is how you apply new
+   `docker-compose.yml` changes to it:
+
+   ```powershell
+   docker compose --profile training up --build ai-trainer
+   ```
+
+   You will not lose existing training progress by doing this. Checkpoints and
+   the trained adapter live in the persistent `ai-models` volume, not in the
+   container itself, and `train.py` auto-resumes from the newest checkpoint
+   found there. Only deleting that volume (or the checkpoint folder, as in the
+   clean-reset command above) discards prior training.
+
 4. Rebuild and restart the inference service so it loads the new adapter:
 
    ```powershell
@@ -271,10 +329,10 @@ magic link in its terminal and also returns a clickable development link.
 
 To enable Google sign-in:
 
-1. Copy `apps/api/.env.example` to `apps/api/.env`.
+1. Copy `.env.example` to `.env` in the repository root.
 2. Create a Google OAuth 2.0 Web application client.
 3. Add `http://localhost:4000/auth/google/callback` as an authorized redirect URI.
-4. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `apps/api/.env`.
+4. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `.env`.
 
 Each account has its own workouts. Existing seeded workouts are assigned to the
 internal demo user and are not exposed to newly created accounts.
@@ -282,7 +340,7 @@ internal demo user and are not exposed to newly created accounts.
 ### Strava synchronization
 
 Create an API application at https://www.strava.com/settings/api and set these
-values in `apps/api/.env`:
+values in `.env`:
 
 - `STRAVA_CLIENT_ID`
 - `STRAVA_CLIENT_SECRET`
@@ -311,8 +369,8 @@ The PostgreSQL data volume is preserved between runs. To reset it completely:
 docker compose down -v
 
 The API uses `postgresql://runcoach:runcoach@localhost:5432/runcoach` by default.
-To use a different database, copy `apps/api/.env.example` to `apps/api/.env` and
-set `DATABASE_URL`.
+To use a different database, copy `.env.example` to `.env` in the repository root
+and set `DATABASE_URL`.
 
 Stop PostgreSQL when finished:
 

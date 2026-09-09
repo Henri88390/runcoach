@@ -20,6 +20,9 @@ services:
       LOCAL_LLM_ON_CPU: "true"
       LOCAL_LLM_TIMEOUT_SECONDS: 30
       HF_HUB_DISABLE_XET: "1"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_TIMEOUT_SECONDS: 15
 
   ai-trainer:
     build:

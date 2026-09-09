@@ -45,7 +45,7 @@ import {
   syncStravaActivities,
 } from "./strava.js";
 
-dotenv.config();
+dotenv.config({ path: "../../.env" });
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -523,6 +523,7 @@ app.post(
             question,
             selected_coaches: req.body?.selectedCoaches ?? [],
             training_history: trainingHistory,
+            model_provider: req.body?.modelProvider ?? "local",
           }),
         },
       );
@@ -575,6 +576,27 @@ app.get(
         success: false,
         data: [],
         message: "Coach sources are unavailable",
+      });
+    }
+  },
+);
+
+app.get(
+  "/chat/providers",
+  authenticate,
+  async (_req: AuthenticatedRequest, res: Response) => {
+    try {
+      const providersResponse = await fetch(
+        `${process.env.AI_SERVICE_URL ?? "http://localhost:8000"}/providers`,
+      );
+      if (!providersResponse.ok) throw new Error("Providers request failed");
+      res.json({ success: true, data: await providersResponse.json() });
+    } catch (error) {
+      console.error("Failed to load chat providers:", error);
+      res.status(503).json({
+        success: false,
+        data: [],
+        message: "Chat providers are unavailable",
       });
     }
   },
