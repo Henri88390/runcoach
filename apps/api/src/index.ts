@@ -110,13 +110,11 @@ app.get("/auth/me", async (request: Request, response: Response) => {
 app.post("/auth/email/start", async (request: Request, response: Response) => {
   const email = request.body?.email?.trim().toLowerCase();
   if (!email || !email.includes("@")) {
-    response
-      .status(400)
-      .json({
-        success: false,
-        data: null,
-        message: "A valid email is required",
-      });
+    response.status(400).json({
+      success: false,
+      data: null,
+      message: "A valid email is required",
+    });
     return;
   }
 
@@ -135,13 +133,11 @@ app.get("/auth/email/verify", async (request: Request, response: Response) => {
     typeof request.query.token === "string" ? request.query.token : "";
   const user = token ? await consumeMagicLink(pool, token) : undefined;
   if (!user) {
-    response
-      .status(400)
-      .json({
-        success: false,
-        data: null,
-        message: "This sign-in link is invalid or expired",
-      });
+    response.status(400).json({
+      success: false,
+      data: null,
+      message: "This sign-in link is invalid or expired",
+    });
     return;
   }
   await deleteStravaConnection(pool, user.id);
@@ -260,7 +256,8 @@ app.get(
 
 app.get("/strava/callback", async (request: Request, response: Response) => {
   const code = typeof request.query.code === "string" ? request.query.code : "";
-  const state = typeof request.query.state === "string" ? request.query.state : "";
+  const state =
+    typeof request.query.state === "string" ? request.query.state : "";
   const currentUser = await findUserBySession(
     pool,
     readCookie(request, SESSION_COOKIE),
@@ -307,7 +304,9 @@ app.get("/strava/callback", async (request: Request, response: Response) => {
     );
     return;
   }
-  response.redirect(`${process.env.WEB_URL ?? "http://localhost:3000"}?strava=connected`);
+  response.redirect(
+    `${process.env.WEB_URL ?? "http://localhost:3000"}?strava=connected`,
+  );
 });
 
 app.get(
@@ -327,10 +326,17 @@ app.post(
   async (request: AuthenticatedRequest, response: Response) => {
     try {
       const imported = await syncStravaActivities(pool, request.user!.id);
-      response.json({ success: true, data: { imported }, message: "Strava workouts synchronized" });
+      response.json({
+        success: true,
+        data: { imported },
+        message: "Strava workouts synchronized",
+      });
     } catch (error) {
       console.error("Failed to synchronize Strava activities:", error);
-      const message = error instanceof Error ? error.message : "Strava synchronization failed";
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Strava synchronization failed";
       response.status(502).json({ success: false, data: null, message });
     }
   },
@@ -541,7 +547,9 @@ app.post(
           answer: aiAnswer.answer,
           sources: aiAnswer.sources,
           generationMode:
-            aiAnswer.generationMode ?? aiAnswer.generation_mode ?? "knowledge_fallback",
+            aiAnswer.generationMode ??
+            aiAnswer.generation_mode ??
+            "knowledge_fallback",
         },
         message: "Coach answer generated",
       });
