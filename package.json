@@ -1,0 +1,21 @@
+{
+  "name": "runcoach-ai",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "infrastructure"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "concurrently \"npm --workspace apps/api run dev\" \"npm --workspace apps/web run dev\" \"npm run dev:ai\"",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:api": "npm --workspace apps/api run dev",
+    "dev:ai": "\".venv\\Scripts\\python.exe\" -m uvicorn main:app --app-dir apps/ai-service --reload --host 0.0.0.0 --port 8000",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}
