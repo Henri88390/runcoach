@@ -99,6 +99,7 @@ export default function HomePage() {
     useState<ChatMessage[]>(initialMessages);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [magicLink, setMagicLink] = useState("");
@@ -145,24 +146,34 @@ export default function HomePage() {
   useEffect(() => {
     if (!user) return;
 
+    let cancelled = false;
+    setWeekly([]);
+    setSelectedWorkout(null);
+
     const fetchWorkouts = async () => {
       const response = await apiFetch("/workouts/weekly");
       const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message);
+      if (cancelled) return;
       setWeekly(payload.data ?? []);
       if (payload.data?.[0]?.workouts?.[0]) {
         setSelectedWorkout(payload.data[0].workouts[0]);
       }
     };
 
-    fetchWorkouts();
-
     const fetchStravaStatus = async () => {
       const response = await apiFetch("/strava/status");
       const payload = await response.json();
+      if (cancelled) return;
       setIsStravaConnected(payload.data?.connected ?? false);
     };
 
-    fetchStravaStatus();
+    void fetchWorkouts();
+    void fetchStravaStatus();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   const onSynchronizeStrava = async () => {
@@ -185,7 +196,9 @@ export default function HomePage() {
       setSelectedWorkout(weeklyPayload.data?.[0]?.workouts?.[0] ?? null);
     } catch (error) {
       setStravaMessage(
-        error instanceof Error ? error.message : "Strava synchronization failed",
+        error instanceof Error
+          ? error.message
+          : "Strava synchronization failed",
       );
     } finally {
       setIsStravaLoading(false);
@@ -426,11 +439,20 @@ export default function HomePage() {
               <>
                 <button
                   className="button secondary"
-                  onClick={() => setIsAuthOpen(true)}
+                  onClick={() => {
+                    setAuthMode("login");
+                    setIsAuthOpen(true);
+                  }}
                 >
                   Log in
                 </button>
-                <button className="button" onClick={() => setIsAuthOpen(true)}>
+                <button
+                  className="button"
+                  onClick={() => {
+                    setAuthMode("signup");
+                    setIsAuthOpen(true);
+                  }}
+                >
                   Sign up
                 </button>
               </>
@@ -893,7 +915,11 @@ export default function HomePage() {
               aria-labelledby="auth-title"
             >
               <div className="modal-header">
-                <h2 id="auth-title">RunCoach account</h2>
+                <h2 id="auth-title">
+                  {authMode === "login"
+                    ? "Log in to RunCoach"
+                    : "Create your RunCoach account"}
+                </h2>
                 {user && (
                   <button
                     className="modal-close"
@@ -906,11 +932,14 @@ export default function HomePage() {
                 )}
               </div>
               <p className="confirmation-copy">
-                Sign in or create an account to keep your workouts private and
-                synced.
+                {authMode === "login"
+                  ? "Use Google or your email to access your existing account and keep your workouts synced."
+                  : "Create an account to keep your workouts private and synced."}
               </p>
               <a className="oauth-button" href={`${API_BASE}/auth/google`}>
-                Continue with Google
+                {authMode === "login"
+                  ? "Continue with Google"
+                  : "Create account with Google"}
               </a>
               <div className="auth-divider">or use your email</div>
               <form className="auth-form" onSubmit={onRequestMagicLink}>
