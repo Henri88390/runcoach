@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import {
-  formatEnglishDate,
-  formatEnglishDateRange,
-} from "../lib/date-format";
+import { formatEnglishDate, formatEnglishDateRange } from "../lib/date-format";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
@@ -106,6 +103,9 @@ export default function HomePage() {
   const [authMessage, setAuthMessage] = useState("");
   const [magicLink, setMagicLink] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isStravaConnected, setIsStravaConnected] = useState(false);
+  const [isStravaLoading, setIsStravaLoading] = useState(false);
+  const [stravaMessage, setStravaMessage] = useState("");
   const [question, setQuestion] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [visibleMetrics, setVisibleMetrics] = useState({
@@ -155,7 +155,42 @@ export default function HomePage() {
     };
 
     fetchWorkouts();
+
+    const fetchStravaStatus = async () => {
+      const response = await apiFetch("/strava/status");
+      const payload = await response.json();
+      setIsStravaConnected(payload.data?.connected ?? false);
+    };
+
+    fetchStravaStatus();
   }, [user]);
+
+  const onSynchronizeStrava = async () => {
+    if (!isStravaConnected) {
+      window.location.href = `${API_BASE}/strava/connect`;
+      return;
+    }
+
+    setIsStravaLoading(true);
+    setStravaMessage("");
+    try {
+      const response = await apiFetch("/strava/sync", { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message);
+      setStravaMessage(`${payload.data.imported} Strava workouts synchronized`);
+
+      const weeklyResponse = await apiFetch("/workouts/weekly");
+      const weeklyPayload = await weeklyResponse.json();
+      setWeekly(weeklyPayload.data ?? []);
+      setSelectedWorkout(weeklyPayload.data?.[0]?.workouts?.[0] ?? null);
+    } catch (error) {
+      setStravaMessage(
+        error instanceof Error ? error.message : "Strava synchronization failed",
+      );
+    } finally {
+      setIsStravaLoading(false);
+    }
+  };
 
   const onRequestMagicLink = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -173,7 +208,9 @@ export default function HomePage() {
       setAuthMessage(payload.message);
       setMagicLink(payload.data?.verificationUrl ?? "");
     } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : "Could not send sign-in link");
+      setAuthMessage(
+        error instanceof Error ? error.message : "Could not send sign-in link",
+      );
     } finally {
       setIsAuthLoading(false);
     }
@@ -184,6 +221,8 @@ export default function HomePage() {
     setUser(null);
     setWeekly([]);
     setSelectedWorkout(null);
+    setIsStravaConnected(false);
+    setStravaMessage("");
     setIsAuthOpen(true);
   };
 
@@ -364,6 +403,15 @@ export default function HomePage() {
             {user ? (
               <>
                 <span className="user-greeting">{user.name}</span>
+                <button
+                  className="button secondary"
+                  onClick={onSynchronizeStrava}
+                  disabled={isStravaLoading}
+                >
+                  {isStravaLoading
+                    ? "Synchronizing..."
+                    : "Synchronize Strava account"}
+                </button>
                 <button className="button secondary" onClick={onLogout}>
                   Log out
                 </button>
@@ -389,171 +437,170 @@ export default function HomePage() {
             )}
           </div>
         </header>
+        {user && stravaMessage && (
+          <div className="sync-message" role="status">
+            {stravaMessage}
+          </div>
+        )}
 
         <section className="panel history-panel">
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 20,
-              }}
-            >
-              <h2 style={{ margin: 0 }}>Training history</h2>
-              <details className="metrics-menu" ref={metricsMenuRef}>
-                <summary>Choose metrics</summary>
-                <div className="metrics-menu-content">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={visibleMetrics.distance}
-                      onChange={(event) =>
-                        setVisibleMetrics((current) => ({
-                          ...current,
-                          distance: event.target.checked,
-                        }))
-                      }
-                    />
-                    Distance
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={visibleMetrics.time}
-                      onChange={(event) =>
-                        setVisibleMetrics((current) => ({
-                          ...current,
-                          time: event.target.checked,
-                        }))
-                      }
-                    />
-                    Time
-                  </label>
-                </div>
-              </details>
-            </div>
-
-            <div className="week-grid history-scroll">
-              <div className="history-header" aria-hidden="true">
-                <div />
-                {[
-                  "Mon",
-                  "Tue",
-                  "Wed",
-                  "Thu",
-                  "Fri",
-                  "Sat",
-                  "Sun",
-                ].map((day) => (
-                  <div key={day}>{day}</div>
-                ))}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 20,
+            }}
+          >
+            <h2 style={{ margin: 0 }}>Training history</h2>
+            <details className="metrics-menu" ref={metricsMenuRef}>
+              <summary>Choose metrics</summary>
+              <div className="metrics-menu-content">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={visibleMetrics.distance}
+                    onChange={(event) =>
+                      setVisibleMetrics((current) => ({
+                        ...current,
+                        distance: event.target.checked,
+                      }))
+                    }
+                  />
+                  Distance
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={visibleMetrics.time}
+                    onChange={(event) =>
+                      setVisibleMetrics((current) => ({
+                        ...current,
+                        time: event.target.checked,
+                      }))
+                    }
+                  />
+                  Time
+                </label>
               </div>
-              {weekly.map((week) => (
-                  <div className="week-row" key={week.weekStart}>
-                    <div className="week-label">
-                      <div>{formatEnglishDateRange(week.weekStart)}</div>
-                      {(visibleMetrics.distance || visibleMetrics.time) && (
-                        <div className="week-summary">
-                          {visibleMetrics.distance && (
-                            <div>
-                              <span>Total distance</span>
-                              <strong>
-                                {formatDistance(week.totalDistanceKm)}
-                              </strong>
-                            </div>
-                          )}
-                          {visibleMetrics.time && (
-                            <div>
-                              <span>Total time</span>
-                              <strong>{formatDuration(week.totalMinutes)}</strong>
-                            </div>
-                          )}
+            </details>
+          </div>
+
+          <div className="week-grid history-scroll">
+            <div className="history-header" aria-hidden="true">
+              <div />
+              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
+                <div key={day}>{day}</div>
+              ))}
+            </div>
+            {weekly.map((week) => (
+              <div className="week-row" key={week.weekStart}>
+                <div className="week-label">
+                  <div>{formatEnglishDateRange(week.weekStart)}</div>
+                  {(visibleMetrics.distance || visibleMetrics.time) && (
+                    <div className="week-summary">
+                      {visibleMetrics.distance && (
+                        <div>
+                          <span>Total distance</span>
+                          <strong>
+                            {formatDistance(week.totalDistanceKm)}
+                          </strong>
+                        </div>
+                      )}
+                      {visibleMetrics.time && (
+                        <div>
+                          <span>Total time</span>
+                          <strong>{formatDuration(week.totalMinutes)}</strong>
                         </div>
                       )}
                     </div>
-                  {Array.from({ length: 7 }, (_, index) => {
-                    const date = new Date(week.weekStart);
-                    date.setDate(date.getDate() + index);
-                    const dayString = date.toISOString().slice(0, 10);
-                    const dayWorkouts = week.workouts.filter(
-                      (item) => item.date === dayString,
-                    );
-
-                    return (
-                      <div
-                        key={`${week.weekStart}-${dayString}`}
-                        className={`day-box ${
-                          dayWorkouts.length === 0 ? "empty" : "clickable"
-                        }`}
-                        role={dayWorkouts.length > 0 ? "button" : undefined}
-                        tabIndex={dayWorkouts.length > 0 ? 0 : undefined}
-                        onClick={() => {
-                          if (dayWorkouts[0]) setSelectedWorkout(dayWorkouts[0]);
-                        }}
-                        onKeyDown={(event) => {
-                          if (
-                            dayWorkouts[0] &&
-                            (event.key === "Enter" || event.key === " ")
-                          ) {
-                            event.preventDefault();
-                            setSelectedWorkout(dayWorkouts[0]);
-                          }
-                        }}
-                      >
-                        <div
-                          className={`day-meta ${
-                            dayWorkouts.some(
-                              (workout) => workout.id === selectedWorkout?.id,
-                            )
-                              ? "selected"
-                              : ""
-                          }`}
-                        >
-                          {new Date(`${dayString}T00:00:00`).getDate()}
-                        </div>
-                        {dayWorkouts.length > 0 ? (
-                          <div className="day-workouts">
-                            {dayWorkouts.map((workout) => (
-                              <button
-                                key={workout.id}
-                                className={`day-workout ${
-                                  selectedWorkout?.id === workout.id
-                                    ? "selected"
-                                    : ""
-                                }`}
-                                aria-pressed={selectedWorkout?.id === workout.id}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setSelectedWorkout(workout);
-                                }}
-                              >
-                                <div className="workout-pill">{workout.type}</div>
-                                <div className="day-workout-title">{workout.title}</div>
-                                {workout.startTime && (
-                                  <div className="day-workout-time">
-                                    {workout.startTime.slice(0, 5)}
-                                  </div>
-                                )}
-                                <div className="workout-hover-details">
-                                  <span>
-                                    {formatDuration(workout.durationMinutes)}
-                                  </span>
-                                  <span>
-                                    {formatDistance(workout.distanceKm ?? 0)}
-                                  </span>
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="subtle">—</div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  )}
                 </div>
-              ))}
-            </div>
+                {Array.from({ length: 7 }, (_, index) => {
+                  const date = new Date(week.weekStart);
+                  date.setDate(date.getDate() + index);
+                  const dayString = date.toISOString().slice(0, 10);
+                  const dayWorkouts = week.workouts.filter(
+                    (item) => item.date === dayString,
+                  );
+
+                  return (
+                    <div
+                      key={`${week.weekStart}-${dayString}`}
+                      className={`day-box ${
+                        dayWorkouts.length === 0 ? "empty" : "clickable"
+                      }`}
+                      role={dayWorkouts.length > 0 ? "button" : undefined}
+                      tabIndex={dayWorkouts.length > 0 ? 0 : undefined}
+                      onClick={() => {
+                        if (dayWorkouts[0]) setSelectedWorkout(dayWorkouts[0]);
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          dayWorkouts[0] &&
+                          (event.key === "Enter" || event.key === " ")
+                        ) {
+                          event.preventDefault();
+                          setSelectedWorkout(dayWorkouts[0]);
+                        }
+                      }}
+                    >
+                      <div
+                        className={`day-meta ${
+                          dayWorkouts.some(
+                            (workout) => workout.id === selectedWorkout?.id,
+                          )
+                            ? "selected"
+                            : ""
+                        }`}
+                      >
+                        {new Date(`${dayString}T00:00:00`).getDate()}
+                      </div>
+                      {dayWorkouts.length > 0 ? (
+                        <div className="day-workouts">
+                          {dayWorkouts.map((workout) => (
+                            <button
+                              key={workout.id}
+                              className={`day-workout ${
+                                selectedWorkout?.id === workout.id
+                                  ? "selected"
+                                  : ""
+                              }`}
+                              aria-pressed={selectedWorkout?.id === workout.id}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedWorkout(workout);
+                              }}
+                            >
+                              <div className="workout-pill">{workout.type}</div>
+                              <div className="day-workout-title">
+                                {workout.title}
+                              </div>
+                              {workout.startTime && (
+                                <div className="day-workout-time">
+                                  {workout.startTime.slice(0, 5)}
+                                </div>
+                              )}
+                              <div className="workout-hover-details">
+                                <span>
+                                  {formatDuration(workout.durationMinutes)}
+                                </span>
+                                <span>
+                                  {formatDistance(workout.distanceKm ?? 0)}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="subtle">—</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </section>
 
         <section className="grid lower-grid">
@@ -743,51 +790,55 @@ export default function HomePage() {
                     >
                       Cancel
                     </button>
-                    <button className="button" type="button" onClick={onSaveWorkout}>
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={onSaveWorkout}
+                    >
                       Save workout
                     </button>
                   </div>
                 </div>
               ) : (
-              <>
-                <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>
-                  {selectedWorkout.title}
-                </div>
-                <div className="subtle" style={{ marginTop: 6 }}>
-                  {formatEnglishDate(selectedWorkout.date)}
-                  {selectedWorkout.startTime &&
-                    ` at ${selectedWorkout.startTime.slice(0, 5)}`}
-                </div>
-                <div className="metric-grid">
-                  <div className="metric">
-                    <div className="label">Duration</div>
-                    <div className="value">
-                      {selectedWorkout.durationMinutes} min
+                <>
+                  <div style={{ fontSize: "1.5rem", fontWeight: 700 }}>
+                    {selectedWorkout.title}
+                  </div>
+                  <div className="subtle" style={{ marginTop: 6 }}>
+                    {formatEnglishDate(selectedWorkout.date)}
+                    {selectedWorkout.startTime &&
+                      ` at ${selectedWorkout.startTime.slice(0, 5)}`}
+                  </div>
+                  <div className="metric-grid">
+                    <div className="metric">
+                      <div className="label">Duration</div>
+                      <div className="value">
+                        {selectedWorkout.durationMinutes} min
+                      </div>
+                    </div>
+                    <div className="metric">
+                      <div className="label">Distance</div>
+                      <div className="value">
+                        {selectedWorkout.distanceKm ?? 0} km
+                      </div>
+                    </div>
+                    <div className="metric">
+                      <div className="label">Avg HR</div>
+                      <div className="value">
+                        {selectedWorkout.averageHeartRate ?? "--"} bpm
+                      </div>
                     </div>
                   </div>
-                  <div className="metric">
-                    <div className="label">Distance</div>
-                    <div className="value">
-                      {selectedWorkout.distanceKm ?? 0} km
-                    </div>
+                  <div
+                    style={{
+                      marginTop: 18,
+                      lineHeight: 1.6,
+                      color: "var(--muted)",
+                    }}
+                  >
+                    {selectedWorkout.notes}
                   </div>
-                  <div className="metric">
-                    <div className="label">Avg HR</div>
-                    <div className="value">
-                      {selectedWorkout.averageHeartRate ?? "--"} bpm
-                    </div>
-                  </div>
-                </div>
-                <div
-                  style={{
-                    marginTop: 18,
-                    lineHeight: 1.6,
-                    color: "var(--muted)",
-                  }}
-                >
-                  {selectedWorkout.notes}
-                </div>
-              </>
+                </>
               )
             ) : (
               <div className="subtle">Select a workout to view details.</div>
@@ -835,7 +886,12 @@ export default function HomePage() {
 
         {isAuthOpen && (
           <div className="modal-backdrop" role="presentation">
-            <section className="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+            <section
+              className="modal auth-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="auth-title"
+            >
               <div className="modal-header">
                 <h2 id="auth-title">RunCoach account</h2>
                 {user && (
@@ -850,7 +906,8 @@ export default function HomePage() {
                 )}
               </div>
               <p className="confirmation-copy">
-                Sign in or create an account to keep your workouts private and synced.
+                Sign in or create an account to keep your workouts private and
+                synced.
               </p>
               <a className="oauth-button" href={`${API_BASE}/auth/google`}>
                 Continue with Google
@@ -868,7 +925,11 @@ export default function HomePage() {
                     required
                   />
                 </label>
-                <button className="button" type="submit" disabled={isAuthLoading}>
+                <button
+                  className="button"
+                  type="submit"
+                  disabled={isAuthLoading}
+                >
                   {isAuthLoading ? "Sending..." : "Email me a sign-in link"}
                 </button>
               </form>
@@ -910,8 +971,8 @@ export default function HomePage() {
                 </button>
               </div>
               <p className="confirmation-copy">
-                Are you sure you want to delete “{selectedWorkout.title}”?
-                This action cannot be undone.
+                Are you sure you want to delete “{selectedWorkout.title}”? This
+                action cannot be undone.
               </p>
               <div className="confirmation-actions">
                 <button

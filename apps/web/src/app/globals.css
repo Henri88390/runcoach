@@ -142,6 +142,12 @@ main {
   font-weight: 600;
 }
 
+.sync-message {
+  margin: -8px 0 16px;
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+
 .button {
   background: linear-gradient(135deg, var(--primary), var(--primary-strong));
   color: white;
@@ -158,6 +164,11 @@ main {
   color: var(--text);
   border: 1px solid var(--panel-border);
   box-shadow: none;
+}
+
+.button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .button.danger {

@@ -21,8 +21,8 @@ type WorkoutRow = {
   type: WorkoutType;
   duration_minutes: number;
   distance_km: number | null;
-  average_heart_rate: number | null;
-  max_heart_rate: number | null;
+  average_heart_rate: number | string | null;
+  max_heart_rate: number | string | null;
   effort: Workout["effort"];
   notes: string | null;
   source: Workout["source"];
@@ -42,10 +42,13 @@ const mapWorkout = (row: WorkoutRow): Workout => ({
   title: row.title,
   type: row.type,
   durationMinutes: row.duration_minutes,
-  distanceKm:
-    row.distance_km === null ? undefined : Number(row.distance_km),
-  averageHeartRate: row.average_heart_rate ?? undefined,
-  maxHeartRate: row.max_heart_rate ?? undefined,
+  distanceKm: row.distance_km === null ? undefined : Number(row.distance_km),
+  averageHeartRate:
+    row.average_heart_rate === null
+      ? undefined
+      : Number(row.average_heart_rate),
+  maxHeartRate:
+    row.max_heart_rate === null ? undefined : Number(row.max_heart_rate),
   effort: row.effort,
   notes: row.notes ?? undefined,
   source: row.source,
@@ -99,8 +102,8 @@ export async function initializeDatabase() {
       type TEXT NOT NULL,
       duration_minutes INTEGER NOT NULL CHECK (duration_minutes >= 0),
       distance_km NUMERIC(8, 2),
-      average_heart_rate INTEGER,
-      max_heart_rate INTEGER,
+      average_heart_rate NUMERIC,
+      max_heart_rate NUMERIC,
       effort TEXT NOT NULL,
       notes TEXT,
       source TEXT NOT NULL,
@@ -115,6 +118,12 @@ export async function initializeDatabase() {
 
   await pool.query(
     "ALTER TABLE workouts ADD COLUMN IF NOT EXISTS start_time TIME",
+  );
+  await pool.query(
+    "ALTER TABLE workouts ALTER COLUMN average_heart_rate TYPE NUMERIC USING average_heart_rate::numeric",
+  );
+  await pool.query(
+    "ALTER TABLE workouts ALTER COLUMN max_heart_rate TYPE NUMERIC USING max_heart_rate::numeric",
   );
   await pool.query(
     "UPDATE workouts SET start_time = '07:00' WHERE start_time IS NULL",

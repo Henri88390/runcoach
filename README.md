@@ -38,20 +38,36 @@ To enable Google sign-in:
 Each account has its own workouts. Existing seeded workouts are assigned to the
 internal demo user and are not exposed to newly created accounts.
 
+### Strava synchronization
+
+Create an API application at https://www.strava.com/settings/api and set these
+values in `apps/api/.env`:
+
+- `STRAVA_CLIENT_ID`
+- `STRAVA_CLIENT_SECRET`
+- `STRAVA_TOKEN_ENCRYPTION_KEY` (a long random secret)
+
+Set the Strava app's Authorization Callback Domain to `localhost` for local
+development. The callback URL used by the API is
+`http://localhost:4000/strava/callback`. After signing in, click **Synchronize
+Strava account**. The first click connects the account; later clicks import the
+user's running activities and refresh the training history. Imported activities
+are deduplicated per user.
+
 ## Docker development
 
 Docker Desktop must be running. Start the complete stack with:
 
-   docker compose up --build
+docker compose up --build
 
 This starts PostgreSQL, the Python AI service, the Node API, and the Next.js
 web app. Open http://localhost:3000. Stop the stack with:
 
-   docker compose down
+docker compose down
 
 The PostgreSQL data volume is preserved between runs. To reset it completely:
 
-   docker compose down -v
+docker compose down -v
 
 The API uses `postgresql://runcoach:runcoach@localhost:5432/runcoach` by default.
 To use a different database, copy `apps/api/.env.example` to `apps/api/.env` and

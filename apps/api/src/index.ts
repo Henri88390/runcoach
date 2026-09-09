@@ -28,12 +28,20 @@ import {
   createOAuthState,
   createSession,
   createUser,
+  createStravaOAuthState,
   findUserBySession,
   initializeAuthDatabase,
   revokeSession,
   SESSION_COOKIE,
+  consumeStravaOAuthState,
   type AuthUser,
 } from "./auth.js";
+import {
+  hasStravaConnection,
+  initializeStravaDatabase,
+  saveStravaConnection,
+  syncStravaActivities,
+} from "./strava.js";
 
 dotenv.config();
 
@@ -68,9 +76,14 @@ const authenticate = async (
   response: Response,
   next: NextFunction,
 ) => {
-  const user = await findUserBySession(pool, readCookie(request, SESSION_COOKIE));
+  const user = await findUserBySession(
+    pool,
+    readCookie(request, SESSION_COOKIE),
+  );
   if (!user) {
-    response.status(401).json({ success: false, data: null, message: "Login required" });
+    response
+      .status(401)
+      .json({ success: false, data: null, message: "Login required" });
     return;
   }
   request.user = user;
@@ -78,14 +91,23 @@ const authenticate = async (
 };
 
 app.get("/auth/me", async (request: Request, response: Response) => {
-  const user = await findUserBySession(pool, readCookie(request, SESSION_COOKIE));
+  const user = await findUserBySession(
+    pool,
+    readCookie(request, SESSION_COOKIE),
+  );
   response.json({ success: true, data: user ?? null });
 });
 
 app.post("/auth/email/start", async (request: Request, response: Response) => {
   const email = request.body?.email?.trim().toLowerCase();
   if (!email || !email.includes("@")) {
-    response.status(400).json({ success: false, data: null, message: "A valid email is required" });
+    response
+      .status(400)
+      .json({
+        success: false,
+        data: null,
+        message: "A valid email is required",
+      });
     return;
   }
 
@@ -100,10 +122,17 @@ app.post("/auth/email/start", async (request: Request, response: Response) => {
 });
 
 app.get("/auth/email/verify", async (request: Request, response: Response) => {
-  const token = typeof request.query.token === "string" ? request.query.token : "";
+  const token =
+    typeof request.query.token === "string" ? request.query.token : "";
   const user = token ? await consumeMagicLink(pool, token) : undefined;
   if (!user) {
-    response.status(400).json({ success: false, data: null, message: "This sign-in link is invalid or expired" });
+    response
+      .status(400)
+      .json({
+        success: false,
+        data: null,
+        message: "This sign-in link is invalid or expired",
+      });
     return;
   }
   setSessionCookie(response, await createSession(pool, user.id));
@@ -128,47 +157,59 @@ app.get("/auth/google", async (_request: Request, response: Response) => {
   response.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
 });
 
-app.get("/auth/google/callback", async (request: Request, response: Response) => {
-  const code = typeof request.query.code === "string" ? request.query.code : "";
-  const state = typeof request.query.state === "string" ? request.query.state : "";
-  if (!code || !state || !(await consumeOAuthState(pool, state))) {
-    response.status(400).send("Invalid Google OAuth response");
-    return;
-  }
+app.get(
+  "/auth/google/callback",
+  async (request: Request, response: Response) => {
+    const code =
+      typeof request.query.code === "string" ? request.query.code : "";
+    const state =
+      typeof request.query.state === "string" ? request.query.state : "";
+    if (!code || !state || !(await consumeOAuthState(pool, state))) {
+      response.status(400).send("Invalid Google OAuth response");
+      return;
+    }
 
-  const redirectUri = `${process.env.API_PUBLIC_URL ?? `http://localhost:${port}`}/auth/google/callback`;
-  const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code,
-      client_id: process.env.GOOGLE_CLIENT_ID ?? "",
-      client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-      redirect_uri: redirectUri,
-      grant_type: "authorization_code",
-    }),
-  });
-  const tokens = (await tokenResponse.json()) as { access_token?: string };
-  if (!tokenResponse.ok || !tokens.access_token) {
-    response.status(502).send("Google login could not be completed");
-    return;
-  }
-  const profileResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-    headers: { Authorization: `Bearer ${tokens.access_token}` },
-  });
-  const profile = (await profileResponse.json()) as { email?: string; name?: string; picture?: string };
-  if (!profile.email) {
-    response.status(502).send("Google did not return an email address");
-    return;
-  }
-  const user = await createUser(pool, {
-    email: profile.email,
-    name: profile.name,
-    avatarUrl: profile.picture,
-  });
-  setSessionCookie(response, await createSession(pool, user.id));
-  response.redirect(process.env.WEB_URL ?? "http://localhost:3000");
-});
+    const redirectUri = `${process.env.API_PUBLIC_URL ?? `http://localhost:${port}`}/auth/google/callback`;
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID ?? "",
+        client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+      }),
+    });
+    const tokens = (await tokenResponse.json()) as { access_token?: string };
+    if (!tokenResponse.ok || !tokens.access_token) {
+      response.status(502).send("Google login could not be completed");
+      return;
+    }
+    const profileResponse = await fetch(
+      "https://www.googleapis.com/oauth2/v3/userinfo",
+      {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+      },
+    );
+    const profile = (await profileResponse.json()) as {
+      email?: string;
+      name?: string;
+      picture?: string;
+    };
+    if (!profile.email) {
+      response.status(502).send("Google did not return an email address");
+      return;
+    }
+    const user = await createUser(pool, {
+      email: profile.email,
+      name: profile.name,
+      avatarUrl: profile.picture,
+    });
+    setSessionCookie(response, await createSession(pool, user.id));
+    response.redirect(process.env.WEB_URL ?? "http://localhost:3000");
+  },
+);
 
 app.post("/auth/logout", async (request: Request, response: Response) => {
   await revokeSession(pool, readCookie(request, SESSION_COOKIE));
@@ -178,6 +219,88 @@ app.post("/auth/logout", async (request: Request, response: Response) => {
   );
   response.json({ success: true, data: null });
 });
+
+app.get(
+  "/strava/connect",
+  authenticate,
+  async (request: AuthenticatedRequest, response: Response) => {
+    if (!process.env.STRAVA_CLIENT_ID || !process.env.STRAVA_CLIENT_SECRET) {
+      response.status(503).send("Strava OAuth is not configured");
+      return;
+    }
+    const state = await createStravaOAuthState(pool, request.user!.id);
+    const redirectUri = `${process.env.API_PUBLIC_URL ?? `http://localhost:${port}`}/strava/callback`;
+    const params = new URLSearchParams({
+      client_id: process.env.STRAVA_CLIENT_ID,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      approval_prompt: "auto",
+      scope: "read,activity:read_all",
+      state,
+    });
+    response.redirect(`https://www.strava.com/oauth/authorize?${params}`);
+  },
+);
+
+app.get("/strava/callback", async (request: Request, response: Response) => {
+  const code = typeof request.query.code === "string" ? request.query.code : "";
+  const state = typeof request.query.state === "string" ? request.query.state : "";
+  const userId = state ? await consumeStravaOAuthState(pool, state) : undefined;
+  if (!code || !userId) {
+    response.status(400).send("Invalid Strava OAuth response");
+    return;
+  }
+
+  const redirectUri = `${process.env.API_PUBLIC_URL ?? `http://localhost:${port}`}/strava/callback`;
+  const tokenResponse = await fetch("https://www.strava.com/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.STRAVA_CLIENT_ID ?? "",
+      client_secret: process.env.STRAVA_CLIENT_SECRET ?? "",
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
+    }),
+  });
+  if (!tokenResponse.ok) {
+    response.status(502).send("Strava connection could not be completed");
+    return;
+  }
+  const tokens = (await tokenResponse.json()) as {
+    access_token: string;
+    refresh_token: string;
+    expires_at: number;
+    athlete?: { id: number };
+  };
+  await saveStravaConnection(pool, userId, tokens);
+  response.redirect(process.env.WEB_URL ?? "http://localhost:3000");
+});
+
+app.get(
+  "/strava/status",
+  authenticate,
+  async (request: AuthenticatedRequest, response: Response) => {
+    response.json({
+      success: true,
+      data: { connected: await hasStravaConnection(pool, request.user!.id) },
+    });
+  },
+);
+
+app.post(
+  "/strava/sync",
+  authenticate,
+  async (request: AuthenticatedRequest, response: Response) => {
+    try {
+      const imported = await syncStravaActivities(pool, request.user!.id);
+      response.json({ success: true, data: { imported }, message: "Strava workouts synchronized" });
+    } catch (error) {
+      console.error("Failed to synchronize Strava activities:", error);
+      response.status(502).json({ success: false, data: null, message: "Strava synchronization failed" });
+    }
+  },
+);
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
@@ -234,13 +357,11 @@ app.get(
     const workout = await getWorkout(req.params.id, req.user!.id);
 
     if (!workout) {
-      res
-        .status(404)
-        .json({
-          success: false,
-          data: null as never,
-          message: "Workout not found",
-        });
+      res.status(404).json({
+        success: false,
+        data: null as never,
+        message: "Workout not found",
+      });
       return;
     }
 
@@ -265,7 +386,10 @@ app.get(
 app.delete(
   "/workouts/:id",
   authenticate,
-  async (req: AuthenticatedRequest & Request<{ id: string }>, res: Response) => {
+  async (
+    req: AuthenticatedRequest & Request<{ id: string }>,
+    res: Response,
+  ) => {
     try {
       const deleted = await deleteWorkout(req.params.id, req.user!.id);
       if (!deleted) {
@@ -300,10 +424,13 @@ app.put(
     res: Response<ApiResponse<Workout>>,
   ) => {
     try {
-      const updatedWorkout = await updateWorkout({
-        ...req.body,
-        id: req.params.id,
-      }, req.user!.id);
+      const updatedWorkout = await updateWorkout(
+        {
+          ...req.body,
+          id: req.params.id,
+        },
+        req.user!.id,
+      );
 
       if (!updatedWorkout) {
         res.status(404).json({
@@ -339,13 +466,11 @@ app.post(
     const question = req.body?.question?.trim();
 
     if (!question) {
-      res
-        .status(400)
-        .json({
-          success: false,
-          data: { answer: "Please provide a questions.", sources: [] },
-          message: "Question is required",
-        });
+      res.status(400).json({
+        success: false,
+        data: { answer: "Please provide a questions.", sources: [] },
+        message: "Question is required",
+      });
       return;
     }
 
@@ -492,6 +617,7 @@ function generateAiAnswer(question: string): ChatResponse {
 }
 
 initializeAuthDatabase(pool)
+  .then(() => initializeStravaDatabase(pool))
   .then(() => initializeDatabase())
   .then(() => {
     app.listen(port, () => {

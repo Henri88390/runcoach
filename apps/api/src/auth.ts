@@ -58,6 +58,14 @@ export async function initializeAuthDatabase(pool: Pool) {
       expires_at TIMESTAMPTZ NOT NULL
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS strava_oauth_states (
+      state_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL
+    )
+  `);
 }
 
 export async function findUserBySession(pool: Pool, token?: string) {
@@ -209,6 +217,30 @@ export async function consumeOAuthState(pool: Pool, state: string) {
     [hashToken(state)],
   );
   return result.rowCount === 1;
+}
+
+export async function createStravaOAuthState(pool: Pool, userId: string) {
+  const state = randomBytes(24).toString("base64url");
+  await pool.query(
+    `
+      INSERT INTO strava_oauth_states (state_hash, user_id, expires_at)
+      VALUES ($1, $2, NOW() + INTERVAL '10 minutes')
+    `,
+    [hashToken(state), userId],
+  );
+  return state;
+}
+
+export async function consumeStravaOAuthState(pool: Pool, state: string) {
+  const result = await pool.query<{ user_id: string }>(
+    `
+      DELETE FROM strava_oauth_states
+      WHERE state_hash = $1 AND expires_at > NOW()
+      RETURNING user_id
+    `,
+    [hashToken(state)],
+  );
+  return result.rows[0]?.user_id;
 }
 
 export { SESSION_COOKIE };
