@@ -148,6 +148,30 @@ main {
   font-size: 0.85rem;
 }
 
+.tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.tab {
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.tab.active {
+  color: var(--text);
+  background: rgba(100, 210, 255, 0.12);
+  border-color: var(--primary);
+}
+
 .button {
   background: linear-gradient(135deg, var(--primary), var(--primary-strong));
   color: white;
@@ -456,6 +480,79 @@ main {
   background: rgba(122, 242, 197, 0.12);
   color: var(--accent);
   border: 1px solid rgba(122, 242, 197, 0.3);
+}
+
+.workout-pill.planned {
+  background: rgba(255, 200, 87, 0.12);
+  color: #ffc857;
+  border: 1px dashed rgba(255, 200, 87, 0.45);
+}
+
+.day-workout.planned .day-workout-title {
+  color: #ffc857;
+}
+
+.day-workout.planned {
+  opacity: 0.9;
+}
+
+.day-picker {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.day-picker-cell {
+  display: grid;
+  gap: 6px;
+  padding: 8px 4px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  text-align: center;
+}
+
+.day-picker-cell.active {
+  border-color: var(--primary);
+  background: rgba(100, 210, 255, 0.08);
+}
+
+.day-picker-toggle {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.78rem;
+  padding: 4px 0;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.day-picker-cell.active .day-picker-toggle {
+  color: var(--text);
+}
+
+.day-picker-double {
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 0;
+  cursor: pointer;
+}
+
+.day-picker-double:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.day-picker-double.active {
+  color: white;
+  background: linear-gradient(135deg, var(--primary), var(--primary-strong));
+  border-color: transparent;
 }
 
 .workout-list {

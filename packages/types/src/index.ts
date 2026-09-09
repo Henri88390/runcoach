@@ -1,7 +1,9 @@
 export type WorkoutType =
   | "easy"
   | "tempo"
+  | "threshold"
   | "interval"
+  | "vo2max"
   | "long"
   | "recovery"
   | "race"
@@ -19,9 +21,10 @@ export interface Workout {
   maxHeartRate?: number;
   effort: "easy" | "moderate" | "hard";
   notes?: string;
-  source: "strava" | "manual";
+  source: "strava" | "manual" | "plan";
   completed: boolean;
   tags?: string[];
+  planId?: string;
 }
 
 export interface WeeklyWorkoutSummary {
@@ -76,4 +79,46 @@ export interface ApiResponse<T> {
   data: T;
   success: boolean;
   message?: string;
+}
+
+export type PlanGoalType = "precise" | "general";
+
+export type GeneralGoalCategory =
+  | "speed"
+  | "endurance"
+  | "general"
+  | "maintenance"
+  | "custom";
+
+export type TrainingPlanStatus = "queued" | "generating" | "ready" | "failed";
+
+export type PlanWeekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+/** Maps each selected training day to 1 (single run) or 2 (double: two runs that day). */
+export type WeeklySchedule = Partial<Record<PlanWeekday, 1 | 2>>;
+
+export interface TrainingPlanRequest {
+  name?: string;
+  goalType: PlanGoalType;
+  goalDate: string;
+  startDate?: string;
+  raceName?: string;
+  raceDistanceKm?: number;
+  goalTimeSeconds?: number;
+  generalGoalCategory?: GeneralGoalCategory;
+  generalGoalDescription?: string;
+  selectedCoaches: string[];
+  weeklySchedule: WeeklySchedule;
+  /** Recent race result used to compute VDOT-based training paces. */
+  recentRaceDistanceKm?: number;
+  recentRaceTimeSeconds?: number;
+}
+
+export interface TrainingPlan extends TrainingPlanRequest {
+  id: string;
+  name: string;
+  startDate: string;
+  status: TrainingPlanStatus;
+  error?: string;
+  createdAt: string;
 }

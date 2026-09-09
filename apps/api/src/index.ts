@@ -9,18 +9,25 @@ import type {
   ApiResponse,
   ChatRequest,
   ChatResponse,
+  TrainingPlan,
+  TrainingPlanRequest,
   Workout,
   WorkoutDetails,
 } from "@runcoach/types";
 import {
+  createTrainingPlan,
   createWorkout,
+  deleteTrainingPlan,
   deleteWorkout,
+  getTrainingPlan,
   getWorkout,
   initializeDatabase,
+  listTrainingPlans,
   listWorkouts,
   pool,
   updateWorkout,
 } from "./db.js";
+import { enqueuePlanGeneration } from "./planQueue.js";
 import {
   consumeMagicLink,
   consumeOAuthState,
@@ -630,6 +637,174 @@ app.post(
         success: false,
         data: null as never,
         message: "Workout could not be saved",
+      });
+    }
+  },
+);
+
+app.post(
+  "/plans",
+  authenticate,
+  async (
+    req: AuthenticatedRequest & Request<unknown, unknown, TrainingPlanRequest>,
+    res: Response<ApiResponse<TrainingPlan>>,
+  ) => {
+    const body = req.body;
+    if (!body?.goalDate) {
+      res.status(400).json({
+        success: false,
+        data: null as never,
+        message: "A goal date is required",
+      });
+      return;
+    }
+    if (
+      body.goalType === "precise" &&
+      (!body.raceDistanceKm || !body.goalTimeSeconds)
+    ) {
+      res.status(400).json({
+        success: false,
+        data: null as never,
+        message:
+          "A race distance and target time are required for a precise goal",
+      });
+      return;
+    }
+    if (body.goalType === "general" && !body.name?.trim()) {
+      res.status(400).json({
+        success: false,
+        data: null as never,
+        message: "A plan name is required for a general goal plan",
+      });
+      return;
+    }
+    if (body.startDate && body.startDate >= body.goalDate) {
+      res.status(400).json({
+        success: false,
+        data: null as never,
+        message: "The start date must be before the goal date",
+      });
+      return;
+    }
+    if (!body.weeklySchedule || Object.keys(body.weeklySchedule).length === 0) {
+      res.status(400).json({
+        success: false,
+        data: null as never,
+        message: "Select at least one training day",
+      });
+      return;
+    }
+    if (
+      (body.recentRaceDistanceKm && !body.recentRaceTimeSeconds) ||
+      (!body.recentRaceDistanceKm && body.recentRaceTimeSeconds)
+    ) {
+      res.status(400).json({
+        success: false,
+        data: null as never,
+        message: "A recent race needs both a distance and a time",
+      });
+      return;
+    }
+
+    const planRequest: TrainingPlanRequest = {
+      ...body,
+      name:
+        body.name?.trim() ||
+        (body.goalType === "precise"
+          ? `${body.raceName ?? "Race"} plan`
+          : "Training plan"),
+      startDate: body.startDate || new Date().toISOString().slice(0, 10),
+    };
+
+    try {
+      const plan = await createTrainingPlan(planRequest, req.user!.id);
+      enqueuePlanGeneration({
+        planId: plan.id,
+        userId: req.user!.id,
+        request: planRequest,
+      });
+      res.status(202).json({
+        success: true,
+        data: plan,
+        message: "Training plan is generating",
+      });
+    } catch (error) {
+      console.error("Failed to create training plan:", error);
+      res.status(500).json({
+        success: false,
+        data: null as never,
+        message: "Training plan could not be created",
+      });
+    }
+  },
+);
+
+app.get(
+  "/plans",
+  authenticate,
+  async (
+    req: AuthenticatedRequest,
+    res: Response<ApiResponse<TrainingPlan[]>>,
+  ) => {
+    try {
+      res.json({ success: true, data: await listTrainingPlans(req.user!.id) });
+    } catch {
+      res.status(500).json({
+        success: false,
+        data: [],
+        message: "Training plans could not be loaded",
+      });
+    }
+  },
+);
+
+app.get(
+  "/plans/:id",
+  authenticate,
+  async (
+    req: AuthenticatedRequest & Request<{ id: string }>,
+    res: Response<ApiResponse<TrainingPlan>>,
+  ) => {
+    const plan = await getTrainingPlan(req.params.id, req.user!.id);
+    if (!plan) {
+      res.status(404).json({
+        success: false,
+        data: null as never,
+        message: "Training plan not found",
+      });
+      return;
+    }
+    res.json({ success: true, data: plan });
+  },
+);
+
+app.delete(
+  "/plans/:id",
+  authenticate,
+  async (
+    req: AuthenticatedRequest & Request<{ id: string }>,
+    res: Response,
+  ) => {
+    try {
+      const deleted = await deleteTrainingPlan(req.params.id, req.user!.id);
+      if (!deleted) {
+        res.status(404).json({
+          success: false,
+          data: null,
+          message: "Training plan not found",
+        });
+        return;
+      }
+      res.json({
+        success: true,
+        data: null,
+        message: "Training plan deleted",
+      });
+    } catch {
+      res.status(500).json({
+        success: false,
+        data: null,
+        message: "Training plan could not be deleted",
       });
     }
   },

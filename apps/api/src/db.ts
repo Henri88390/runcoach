@@ -1,6 +1,11 @@
 import pg, { type PoolClient } from "pg";
 import dotenv from "dotenv";
-import type { Workout, WorkoutType } from "@runcoach/types";
+import type {
+  TrainingPlan,
+  TrainingPlanRequest,
+  Workout,
+  WorkoutType,
+} from "@runcoach/types";
 import { workouts as seedWorkouts } from "./data.js";
 
 dotenv.config();
@@ -28,6 +33,7 @@ type WorkoutRow = {
   source: Workout["source"];
   completed: boolean;
   tags: string[];
+  plan_id: string | null;
 };
 
 const mapDatabaseDate = (value: string | Date) =>
@@ -54,6 +60,7 @@ const mapWorkout = (row: WorkoutRow): Workout => ({
   source: row.source,
   completed: row.completed,
   tags: row.tags,
+  planId: row.plan_id ?? undefined,
 });
 
 const insertWorkout = async (
@@ -66,9 +73,9 @@ const insertWorkout = async (
       INSERT INTO workouts (
         id, user_id, date, start_time, title, type, duration_minutes, distance_km,
         average_heart_rate, max_heart_rate, effort, notes, source,
-        completed, tags
+        completed, tags, plan_id
       )
-      VALUES ($1, $2, $3::date, $4::time, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      VALUES ($1, $2, $3::date, $4::time, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       ON CONFLICT (id) DO NOTHING
     `,
     [
@@ -87,6 +94,7 @@ const insertWorkout = async (
       workout.source,
       workout.completed,
       workout.tags ?? [],
+      workout.planId ?? null,
     ],
   );
 };
@@ -114,6 +122,48 @@ export async function initializeDatabase() {
 
   await pool.query(
     "ALTER TABLE workouts ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE",
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS training_plans (
+      id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL DEFAULT 'Training plan',
+      goal_type TEXT NOT NULL,
+      race_name TEXT,
+      race_distance_km NUMERIC(8, 2),
+      goal_date DATE NOT NULL,
+      start_date DATE,
+      goal_time_seconds INTEGER,
+      general_goal_category TEXT,
+      general_goal_description TEXT,
+      selected_coaches TEXT[] NOT NULL DEFAULT '{}',
+      weekly_schedule JSONB NOT NULL DEFAULT '{}',
+      recent_race_distance_km NUMERIC(8, 2),
+      recent_race_time_seconds INTEGER,
+      status TEXT NOT NULL DEFAULT 'queued',
+      error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+
+  await pool.query(
+    "ALTER TABLE workouts ADD COLUMN IF NOT EXISTS plan_id TEXT REFERENCES training_plans(id) ON DELETE CASCADE",
+  );
+  await pool.query(
+    "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Training plan'",
+  );
+  await pool.query(
+    "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS start_date DATE",
+  );
+  await pool.query(
+    "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS weekly_schedule JSONB NOT NULL DEFAULT '{}'",
+  );
+  await pool.query(
+    "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS recent_race_distance_km NUMERIC(8, 2)",
+  );
+  await pool.query(
+    "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS recent_race_time_seconds INTEGER",
   );
 
   await pool.query(
@@ -277,4 +327,142 @@ export async function updateWorkout(workout: Workout, userId: string) {
   );
 
   return result.rows[0] ? mapWorkout(result.rows[0]) : undefined;
+}
+
+export async function createPlanWorkouts(workouts: Workout[], userId: string) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const workout of workouts) {
+      await insertWorkout(client, workout, userId);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+type TrainingPlanRow = {
+  id: string;
+  name: string;
+  goal_type: TrainingPlan["goalType"];
+  race_name: string | null;
+  race_distance_km: number | string | null;
+  goal_date: string | Date;
+  start_date: string | Date | null;
+  goal_time_seconds: number | null;
+  general_goal_category: TrainingPlan["generalGoalCategory"] | null;
+  general_goal_description: string | null;
+  selected_coaches: string[];
+  weekly_schedule: TrainingPlan["weeklySchedule"];
+  recent_race_distance_km: number | string | null;
+  recent_race_time_seconds: number | null;
+  status: TrainingPlan["status"];
+  error: string | null;
+  created_at: string | Date;
+};
+
+const mapTrainingPlan = (row: TrainingPlanRow): TrainingPlan => ({
+  id: row.id,
+  name: row.name,
+  goalType: row.goal_type,
+  raceName: row.race_name ?? undefined,
+  raceDistanceKm:
+    row.race_distance_km === null ? undefined : Number(row.race_distance_km),
+  goalDate: mapDatabaseDate(row.goal_date),
+  startDate: row.start_date
+    ? mapDatabaseDate(row.start_date)
+    : mapDatabaseDate(row.created_at),
+  goalTimeSeconds: row.goal_time_seconds ?? undefined,
+  generalGoalCategory: row.general_goal_category ?? undefined,
+  generalGoalDescription: row.general_goal_description ?? undefined,
+  selectedCoaches: row.selected_coaches,
+  weeklySchedule: row.weekly_schedule ?? {},
+  recentRaceDistanceKm:
+    row.recent_race_distance_km === null
+      ? undefined
+      : Number(row.recent_race_distance_km),
+  recentRaceTimeSeconds: row.recent_race_time_seconds ?? undefined,
+  status: row.status,
+  error: row.error ?? undefined,
+  createdAt:
+    row.created_at instanceof Date
+      ? row.created_at.toISOString()
+      : row.created_at,
+});
+
+export async function createTrainingPlan(
+  request: TrainingPlanRequest,
+  userId: string,
+) {
+  const id = `plan-${Date.now()}-${Math.round(Math.random() * 1000)}`;
+  const result = await pool.query<TrainingPlanRow>(
+    `
+      INSERT INTO training_plans (
+        id, user_id, name, goal_type, race_name, race_distance_km, goal_date,
+        start_date, goal_time_seconds, general_goal_category,
+        general_goal_description, selected_coaches, weekly_schedule,
+        recent_race_distance_km, recent_race_time_seconds, status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, $9, $10, $11, $12, $13, $14, $15, 'queued')
+      RETURNING *
+    `,
+    [
+      id,
+      userId,
+      request.name ?? "Training plan",
+      request.goalType,
+      request.raceName ?? null,
+      request.raceDistanceKm ?? null,
+      request.goalDate,
+      request.startDate ?? null,
+      request.goalTimeSeconds ?? null,
+      request.generalGoalCategory ?? null,
+      request.generalGoalDescription ?? null,
+      request.selectedCoaches ?? [],
+      JSON.stringify(request.weeklySchedule ?? {}),
+      request.recentRaceDistanceKm ?? null,
+      request.recentRaceTimeSeconds ?? null,
+    ],
+  );
+  return mapTrainingPlan(result.rows[0]);
+}
+
+export async function listTrainingPlans(userId: string) {
+  const result = await pool.query<TrainingPlanRow>(
+    "SELECT * FROM training_plans WHERE user_id = $1 ORDER BY created_at DESC",
+    [userId],
+  );
+  return result.rows.map(mapTrainingPlan);
+}
+
+export async function getTrainingPlan(id: string, userId: string) {
+  const result = await pool.query<TrainingPlanRow>(
+    "SELECT * FROM training_plans WHERE id = $1 AND user_id = $2",
+    [id, userId],
+  );
+  return result.rows[0] ? mapTrainingPlan(result.rows[0]) : undefined;
+}
+
+export async function updateTrainingPlanStatus(
+  id: string,
+  userId: string,
+  status: TrainingPlan["status"],
+  error?: string,
+) {
+  await pool.query(
+    "UPDATE training_plans SET status = $3, error = $4 WHERE id = $1 AND user_id = $2",
+    [id, userId, status, error ?? null],
+  );
+}
+
+export async function deleteTrainingPlan(id: string, userId: string) {
+  const result = await pool.query(
+    "DELETE FROM training_plans WHERE id = $1 AND user_id = $2",
+    [id, userId],
+  );
+  return result.rowCount === 1;
 }

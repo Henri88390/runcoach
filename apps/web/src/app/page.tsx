@@ -12,7 +12,9 @@ const apiFetch = (path: string, init?: RequestInit) =>
 type WorkoutType =
   | "easy"
   | "tempo"
+  | "threshold"
   | "interval"
+  | "vo2max"
   | "long"
   | "recovery"
   | "race"
@@ -30,9 +32,10 @@ type Workout = {
   maxHeartRate?: number;
   effort: "easy" | "moderate" | "hard";
   notes?: string;
-  source: "strava" | "manual";
+  source: "strava" | "manual" | "plan";
   completed: boolean;
   tags?: string[];
+  planId?: string;
 };
 
 type WeeklyWorkoutSummary = {
@@ -79,6 +82,128 @@ type ManualWorkoutForm = {
   startTime: string;
 };
 
+type PlanGoalType = "precise" | "general";
+
+type GeneralGoalCategory =
+  | "speed"
+  | "endurance"
+  | "general"
+  | "maintenance"
+  | "custom";
+
+type TrainingPlanStatus = "queued" | "generating" | "ready" | "failed";
+
+type PlanWeekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+type WeeklySchedule = Partial<Record<PlanWeekday, 1 | 2>>;
+
+const weekdayOptions: { value: PlanWeekday; label: string }[] = [
+  { value: "mon", label: "Mon" },
+  { value: "tue", label: "Tue" },
+  { value: "wed", label: "Wed" },
+  { value: "thu", label: "Thu" },
+  { value: "fri", label: "Fri" },
+  { value: "sat", label: "Sat" },
+  { value: "sun", label: "Sun" },
+];
+
+const defaultWeeklySchedule: WeeklySchedule = {
+  tue: 1,
+  thu: 1,
+  sat: 1,
+  sun: 1,
+};
+
+type TrainingPlan = {
+  id: string;
+  name: string;
+  goalType: PlanGoalType;
+  raceName?: string;
+  raceDistanceKm?: number;
+  goalDate: string;
+  startDate: string;
+  goalTimeSeconds?: number;
+  generalGoalCategory?: GeneralGoalCategory;
+  generalGoalDescription?: string;
+  selectedCoaches: string[];
+  weeklySchedule: WeeklySchedule;
+  status: TrainingPlanStatus;
+  error?: string;
+  createdAt: string;
+};
+
+type PlanForm = {
+  goalType: PlanGoalType;
+  generalPlanName: string;
+  raceName: string;
+  raceDate: string;
+  raceDistancePreset: string;
+  raceDistanceKm: number;
+  goalHours: number;
+  goalMinutes: number;
+  goalSeconds: number;
+  generalGoalCategory: GeneralGoalCategory;
+  generalGoalDescription: string;
+  planEndDate: string;
+  startDate: string;
+  selectedCoaches: string[];
+  weeklySchedule: WeeklySchedule;
+  hasRecentRace: boolean;
+  recentRaceDistancePreset: string;
+  recentRaceDistanceKm: number;
+  recentRaceHours: number;
+  recentRaceMinutes: number;
+  recentRaceSeconds: number;
+};
+
+const raceDistancePresets: { value: string; label: string; km?: number }[] = [
+  { value: "5k", label: "5K", km: 5 },
+  { value: "10k", label: "10K", km: 10 },
+  { value: "15k", label: "15K", km: 15 },
+  { value: "10-mile", label: "10 miles", km: 16.0934 },
+  { value: "half-marathon", label: "Half marathon", km: 21.0975 },
+  { value: "marathon", label: "Marathon", km: 42.195 },
+  { value: "custom", label: "Custom distance" },
+];
+
+const generalGoalLabels: Record<GeneralGoalCategory, string> = {
+  speed: "Improve top-end speed",
+  endurance: "Improve endurance",
+  general: "General development",
+  maintenance: "Maintenance",
+  custom: "Other (describe below)",
+};
+
+const addDaysToToday = (days: number) => {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const defaultPlanForm: PlanForm = {
+  goalType: "precise",
+  generalPlanName: "",
+  raceName: "10K race",
+  raceDate: addDaysToToday(84),
+  raceDistancePreset: "10k",
+  raceDistanceKm: 10,
+  goalHours: 0,
+  goalMinutes: 37,
+  goalSeconds: 0,
+  generalGoalCategory: "general",
+  generalGoalDescription: "",
+  planEndDate: addDaysToToday(84),
+  startDate: "",
+  selectedCoaches: [],
+  weeklySchedule: defaultWeeklySchedule,
+  hasRecentRace: false,
+  recentRaceDistancePreset: "10k",
+  recentRaceDistanceKm: 10,
+  recentRaceHours: 0,
+  recentRaceMinutes: 45,
+  recentRaceSeconds: 0,
+};
+
 const initialMessages: ChatMessage[] = [
   {
     id: "welcome",
@@ -108,6 +233,14 @@ const formatDuration = (totalMinutes: number) => {
 
   if (hours === 0) return `${minutes}min`;
   return `${hours}h${String(minutes).padStart(2, "0")}min`;
+};
+
+const formatPace = (durationMinutes: number, distanceKm?: number) => {
+  if (!distanceKm) return "--";
+  const secPerKm = Math.round((durationMinutes * 60) / distanceKm);
+  const minutes = Math.floor(secPerKm / 60);
+  const seconds = secPerKm % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
 };
 
 const renderCitedAnswer = (content: string, sources: ChatMessage["sources"]) =>
@@ -178,6 +311,18 @@ export default function HomePage() {
     effort: "easy",
     notes: "Manually added run",
   });
+  const [activeTab, setActiveTab] = useState<string>("history");
+  const [plans, setPlans] = useState<TrainingPlan[]>([]);
+  const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
+  const [isPlanSubmitting, setIsPlanSubmitting] = useState(false);
+  const [planMessage, setPlanMessage] = useState("");
+  const [planForm, setPlanForm] = useState<PlanForm>(defaultPlanForm);
+  const [planToDelete, setPlanToDelete] = useState<TrainingPlan | null>(null);
+
+  const switchTab = (tab: string) => {
+    setActiveTab(tab);
+    setSelectedWorkout(null);
+  };
 
   useEffect(() => {
     const loadSession = async () => {
@@ -239,15 +384,51 @@ export default function HomePage() {
       setChatProviders(payload.data);
     };
 
+    const fetchPlans = async () => {
+      const response = await apiFetch("/plans");
+      const payload = await response.json();
+      if (cancelled || !response.ok) return;
+      setPlans(payload.data ?? []);
+    };
+
     void fetchWorkouts();
     void fetchStravaStatus();
     void fetchCoaches();
     void fetchChatProviders();
+    void fetchPlans();
 
     return () => {
       cancelled = true;
     };
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const hasPendingPlan = plans.some(
+      (plan) => plan.status === "queued" || plan.status === "generating",
+    );
+    if (!hasPendingPlan) return;
+
+    const interval = setInterval(async () => {
+      const plansResponse = await apiFetch("/plans");
+      const plansPayload = await plansResponse.json();
+      if (plansResponse.ok) {
+        const nextPlans = plansPayload.data ?? [];
+        setPlans(nextPlans);
+        const stillPending = nextPlans.some(
+          (plan: TrainingPlan) =>
+            plan.status === "queued" || plan.status === "generating",
+        );
+        if (!stillPending) setPlanMessage("");
+      }
+
+      const weeklyResponse = await apiFetch("/workouts/weekly");
+      const weeklyPayload = await weeklyResponse.json();
+      if (weeklyResponse.ok) setWeekly(weeklyPayload.data ?? []);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [user, plans]);
 
   const onSynchronizeStrava = async () => {
     if (!isStravaConnected) {
@@ -495,6 +676,150 @@ export default function HomePage() {
     }
   };
 
+  const onCreatePlan = async () => {
+    if (planForm.goalType === "general" && !planForm.generalPlanName.trim()) {
+      setPlanMessage("A plan name is required for a general goal plan.");
+      return;
+    }
+
+    setIsPlanSubmitting(true);
+    setPlanMessage("");
+
+    try {
+      const recentRace = planForm.hasRecentRace
+        ? {
+            recentRaceDistanceKm: Number(planForm.recentRaceDistanceKm),
+            recentRaceTimeSeconds:
+              planForm.recentRaceHours * 3600 +
+              planForm.recentRaceMinutes * 60 +
+              planForm.recentRaceSeconds,
+          }
+        : {};
+
+      const body =
+        planForm.goalType === "precise"
+          ? {
+              name: planForm.raceName.trim() || undefined,
+              goalType: "precise" as const,
+              raceName: planForm.raceName,
+              raceDistanceKm: Number(planForm.raceDistanceKm),
+              goalDate: planForm.raceDate,
+              startDate: planForm.startDate || undefined,
+              goalTimeSeconds:
+                planForm.goalHours * 3600 +
+                planForm.goalMinutes * 60 +
+                planForm.goalSeconds,
+              selectedCoaches: planForm.selectedCoaches,
+              weeklySchedule: planForm.weeklySchedule,
+              ...recentRace,
+            }
+          : {
+              name: planForm.generalPlanName.trim(),
+              goalType: "general" as const,
+              generalGoalCategory: planForm.generalGoalCategory,
+              generalGoalDescription: planForm.generalGoalDescription,
+              goalDate: planForm.planEndDate,
+              startDate: planForm.startDate || undefined,
+              selectedCoaches: planForm.selectedCoaches,
+              weeklySchedule: planForm.weeklySchedule,
+              ...recentRace,
+            };
+
+      const response = await apiFetch("/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) {
+        throw new Error(
+          payload.message ?? "Could not create the training plan",
+        );
+      }
+
+      setPlans((prev) => [payload.data, ...prev]);
+      setIsPlanModalOpen(false);
+      setPlanForm(defaultPlanForm);
+      switchTab(payload.data.id);
+      setPlanMessage("Your training plan is generating in the background.");
+    } catch (error) {
+      setPlanMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not create the training plan",
+      );
+    } finally {
+      setIsPlanSubmitting(false);
+    }
+  };
+
+  const onDeletePlan = async () => {
+    if (!planToDelete) return;
+
+    const response = await apiFetch(`/plans/${planToDelete.id}`, {
+      method: "DELETE",
+    });
+    const payload = await response.json();
+
+    if (payload.success) {
+      setPlans((prev) => prev.filter((plan) => plan.id !== planToDelete.id));
+      if (activeTab === planToDelete.id) switchTab("history");
+      setPlanToDelete(null);
+
+      const weeklyResponse = await apiFetch("/workouts/weekly");
+      const weeklyPayload = await weeklyResponse.json();
+      setWeekly(weeklyPayload.data ?? []);
+    }
+  };
+
+  const toggleScheduleDay = (day: PlanWeekday) => {
+    setPlanForm((prev) => {
+      const next = { ...prev.weeklySchedule };
+      if (next[day]) {
+        delete next[day];
+      } else {
+        next[day] = 1;
+      }
+      return { ...prev, weeklySchedule: next };
+    });
+  };
+
+  const setScheduleDayRuns = (day: PlanWeekday, runs: 1 | 2) => {
+    setPlanForm((prev) => ({
+      ...prev,
+      weeklySchedule: { ...prev.weeklySchedule, [day]: runs },
+    }));
+  };
+
+  const historyWeekly = weekly
+    .map((week) => ({
+      ...week,
+      workouts: week.workouts.filter(
+        (workout) => !(workout.source === "plan" && !workout.completed),
+      ),
+    }))
+    .filter((week) => week.workouts.length > 0);
+
+  const planWeekly = (planId: string) =>
+    weekly
+      .map((week) => ({
+        ...week,
+        workouts: week.workouts.filter(
+          (workout) =>
+            workout.planId === planId ||
+            !(workout.source === "plan" && !workout.completed),
+        ),
+      }))
+      .filter((week) => week.workouts.length > 0);
+
+  const activePlan = plans.find((plan) => plan.id === activeTab);
+  const displayedWeekly =
+    activeTab === "history"
+      ? historyWeekly
+      : activePlan
+        ? planWeekly(activePlan.id)
+        : [];
+
   return (
     <main>
       <div className="dashboard">
@@ -526,6 +851,12 @@ export default function HomePage() {
                 )}
                 <button className="button secondary" onClick={onLogout}>
                   Log out
+                </button>
+                <button
+                  className="button secondary"
+                  onClick={() => setIsPlanModalOpen(true)}
+                >
+                  Create training plan
                 </button>
                 <button
                   className="button"
@@ -563,6 +894,38 @@ export default function HomePage() {
             {stravaMessage}
           </div>
         )}
+        {user && planMessage && (
+          <div className="sync-message" role="status">
+            {planMessage}
+          </div>
+        )}
+
+        {user && (
+          <div className="tab-bar" role="tablist">
+            <button
+              className={`tab ${activeTab === "history" ? "active" : ""}`}
+              role="tab"
+              aria-selected={activeTab === "history"}
+              onClick={() => switchTab("history")}
+            >
+              Training history
+            </button>
+            {plans.map((plan) => (
+              <button
+                key={plan.id}
+                className={`tab ${activeTab === plan.id ? "active" : ""}`}
+                role="tab"
+                aria-selected={activeTab === plan.id}
+                onClick={() => switchTab(plan.id)}
+              >
+                {plan.name}
+                {(plan.status === "queued" || plan.status === "generating") &&
+                  " · generating…"}
+                {plan.status === "failed" && " · failed"}
+              </button>
+            ))}
+          </div>
+        )}
 
         <section className="panel history-panel">
           <div
@@ -573,38 +936,55 @@ export default function HomePage() {
               marginBottom: 20,
             }}
           >
-            <h2 style={{ margin: 0 }}>Training history</h2>
-            <details className="metrics-menu" ref={metricsMenuRef}>
-              <summary>Choose metrics</summary>
-              <div className="metrics-menu-content">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={visibleMetrics.distance}
-                    onChange={(event) =>
-                      setVisibleMetrics((current) => ({
-                        ...current,
-                        distance: event.target.checked,
-                      }))
-                    }
-                  />
-                  Distance
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={visibleMetrics.time}
-                    onChange={(event) =>
-                      setVisibleMetrics((current) => ({
-                        ...current,
-                        time: event.target.checked,
-                      }))
-                    }
-                  />
-                  Time
-                </label>
-              </div>
-            </details>
+            <h2 style={{ margin: 0 }}>
+              {activeTab === "history"
+                ? "Training history"
+                : (activePlan?.name ?? "Training plan")}
+            </h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {activePlan && (
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label="Delete training plan"
+                  title="Delete training plan"
+                  onClick={() => setPlanToDelete(activePlan)}
+                >
+                  🗑
+                </button>
+              )}
+              <details className="metrics-menu" ref={metricsMenuRef}>
+                <summary>Choose metrics</summary>
+                <div className="metrics-menu-content">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={visibleMetrics.distance}
+                      onChange={(event) =>
+                        setVisibleMetrics((current) => ({
+                          ...current,
+                          distance: event.target.checked,
+                        }))
+                      }
+                    />
+                    Distance
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={visibleMetrics.time}
+                      onChange={(event) =>
+                        setVisibleMetrics((current) => ({
+                          ...current,
+                          time: event.target.checked,
+                        }))
+                      }
+                    />
+                    Time
+                  </label>
+                </div>
+              </details>
+            </div>
           </div>
 
           <div className="week-grid history-scroll">
@@ -614,7 +994,7 @@ export default function HomePage() {
                 <div key={day}>{day}</div>
               ))}
             </div>
-            {weekly.map((week) => (
+            {displayedWeekly.map((week) => (
               <div className="week-row" key={week.weekStart}>
                 <div className="week-label">
                   <div>{formatEnglishDateRange(week.weekStart)}</div>
@@ -686,6 +1066,10 @@ export default function HomePage() {
                                 selectedWorkout?.id === workout.id
                                   ? "selected"
                                   : ""
+                              } ${
+                                workout.source === "plan" && !workout.completed
+                                  ? "planned"
+                                  : ""
                               }`}
                               aria-pressed={selectedWorkout?.id === workout.id}
                               onClick={(event) => {
@@ -693,7 +1077,19 @@ export default function HomePage() {
                                 setSelectedWorkout(workout);
                               }}
                             >
-                              <div className="workout-pill">{workout.type}</div>
+                              <div
+                                className={`workout-pill ${
+                                  workout.source === "plan" &&
+                                  !workout.completed
+                                    ? "planned"
+                                    : ""
+                                }`}
+                              >
+                                {workout.type}
+                                {workout.source === "plan" &&
+                                  !workout.completed &&
+                                  " · planned"}
+                              </div>
                               <div className="day-workout-title">
                                 {workout.title}
                               </div>
@@ -812,7 +1208,9 @@ export default function HomePage() {
                       >
                         <option value="easy">Easy</option>
                         <option value="tempo">Tempo</option>
+                        <option value="threshold">Threshold</option>
                         <option value="interval">Interval</option>
+                        <option value="vo2max">VO2max</option>
                         <option value="long">Long</option>
                         <option value="recovery">Recovery</option>
                         <option value="race">Race</option>
@@ -941,6 +1339,15 @@ export default function HomePage() {
                       <div className="label">Distance</div>
                       <div className="value">
                         {selectedWorkout.distanceKm ?? 0} km
+                      </div>
+                    </div>
+                    <div className="metric">
+                      <div className="label">Avg pace</div>
+                      <div className="value">
+                        {formatPace(
+                          selectedWorkout.durationMinutes,
+                          selectedWorkout.distanceKm,
+                        )}
                       </div>
                     </div>
                     <div className="metric">
@@ -1201,6 +1608,57 @@ export default function HomePage() {
           </div>
         )}
 
+        {planToDelete && (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setPlanToDelete(null);
+              }
+            }}
+          >
+            <section
+              className="modal confirmation-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-plan-title"
+            >
+              <div className="modal-header">
+                <h2 id="delete-plan-title">Delete training plan?</h2>
+                <button
+                  className="modal-close"
+                  type="button"
+                  aria-label="Close delete plan dialog"
+                  onClick={() => setPlanToDelete(null)}
+                >
+                  ×
+                </button>
+              </div>
+              <p className="confirmation-copy">
+                Are you sure you want to delete “{planToDelete.name}” and all of
+                its planned workouts? This action cannot be undone.
+              </p>
+              <div className="confirmation-actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => setPlanToDelete(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="button danger"
+                  type="button"
+                  onClick={onDeletePlan}
+                >
+                  Delete plan
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
         {isManualWorkoutModalOpen && (
           <div
             className="modal-backdrop"
@@ -1287,7 +1745,9 @@ export default function HomePage() {
                     >
                       <option value="easy">Easy</option>
                       <option value="tempo">Tempo</option>
+                      <option value="threshold">Threshold</option>
                       <option value="interval">Interval</option>
+                      <option value="vo2max">VO2max</option>
                       <option value="long">Long</option>
                       <option value="recovery">Recovery</option>
                       <option value="race">Race</option>
@@ -1381,6 +1841,453 @@ export default function HomePage() {
                 </label>
                 <button className="button" onClick={onManualSubmit}>
                   Save workout
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
+        {isPlanModalOpen && (
+          <div
+            className="modal-backdrop"
+            role="presentation"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setIsPlanModalOpen(false);
+              }
+            }}
+          >
+            <section
+              className="modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="plan-title"
+            >
+              <div className="modal-header">
+                <h2 id="plan-title">Create training plan</h2>
+                <button
+                  className="modal-close"
+                  type="button"
+                  aria-label="Close training plan dialog"
+                  onClick={() => setIsPlanModalOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="form-grid">
+                <label className="field-label">
+                  Start date (optional)
+                  <input
+                    className="input"
+                    type="date"
+                    value={planForm.startDate}
+                    onChange={(event) =>
+                      setPlanForm((prev) => ({
+                        ...prev,
+                        startDate: event.target.value,
+                      }))
+                    }
+                  />
+                  <span style={{ fontWeight: 400 }}>
+                    Leave blank to start today.
+                  </span>
+                </label>
+
+                <fieldset className="coach-filter">
+                  <legend>Recent performance (optional)</legend>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={planForm.hasRecentRace}
+                      onChange={(event) =>
+                        setPlanForm((prev) => ({
+                          ...prev,
+                          hasRecentRace: event.target.checked,
+                        }))
+                      }
+                    />
+                    I have a recent race result to base paces on
+                  </label>
+                  <span style={{ fontWeight: 400 }}>
+                    Training paces are calculated with the VDOT method from this
+                    result. Without one, a moderate default fitness level is
+                    assumed.
+                  </span>
+                  {planForm.hasRecentRace && (
+                    <div className="form-row form-row-three">
+                      <label className="field-label">
+                        Distance
+                        <select
+                          className="select"
+                          value={planForm.recentRaceDistancePreset}
+                          onChange={(event) => {
+                            const preset = raceDistancePresets.find(
+                              (item) => item.value === event.target.value,
+                            );
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              recentRaceDistancePreset: event.target.value,
+                              recentRaceDistanceKm:
+                                preset?.km ?? prev.recentRaceDistanceKm,
+                            }));
+                          }}
+                        >
+                          {raceDistancePresets.map((preset) => (
+                            <option key={preset.value} value={preset.value}>
+                              {preset.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {planForm.recentRaceDistancePreset === "custom" && (
+                        <label className="field-label">
+                          Custom distance (km)
+                          <input
+                            className="input"
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            value={planForm.recentRaceDistanceKm}
+                            onChange={(event) =>
+                              setPlanForm((prev) => ({
+                                ...prev,
+                                recentRaceDistanceKm: Number(
+                                  event.target.value,
+                                ),
+                              }))
+                            }
+                          />
+                        </label>
+                      )}
+                      <label className="field-label">
+                        Hours
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          value={planForm.recentRaceHours}
+                          onChange={(event) =>
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              recentRaceHours: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="field-label">
+                        Minutes
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          max="59"
+                          value={planForm.recentRaceMinutes}
+                          onChange={(event) =>
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              recentRaceMinutes: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="field-label">
+                        Seconds
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          max="59"
+                          value={planForm.recentRaceSeconds}
+                          onChange={(event) =>
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              recentRaceSeconds: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                  )}
+                </fieldset>
+
+                <fieldset className="coach-filter">
+                  <legend>Goal type</legend>
+                  <label>
+                    <input
+                      type="radio"
+                      name="plan-goal-type"
+                      checked={planForm.goalType === "precise"}
+                      onChange={() =>
+                        setPlanForm((prev) => ({
+                          ...prev,
+                          goalType: "precise",
+                        }))
+                      }
+                    />
+                    Precise goal (a specific race, date and time)
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="plan-goal-type"
+                      checked={planForm.goalType === "general"}
+                      onChange={() =>
+                        setPlanForm((prev) => ({
+                          ...prev,
+                          goalType: "general",
+                        }))
+                      }
+                    />
+                    General goal (no specific race)
+                  </label>
+                </fieldset>
+
+                {planForm.goalType === "precise" ? (
+                  <>
+                    <label className="field-label">
+                      Race name
+                      <input
+                        className="input"
+                        value={planForm.raceName}
+                        onChange={(event) =>
+                          setPlanForm((prev) => ({
+                            ...prev,
+                            raceName: event.target.value,
+                          }))
+                        }
+                        placeholder="e.g. City 10K"
+                      />
+                    </label>
+                    <div className="form-row">
+                      <label className="field-label">
+                        Race date
+                        <input
+                          className="input"
+                          type="date"
+                          value={planForm.raceDate}
+                          onChange={(event) =>
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              raceDate: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="field-label">
+                        Distance
+                        <select
+                          className="select"
+                          value={planForm.raceDistancePreset}
+                          onChange={(event) => {
+                            const preset = raceDistancePresets.find(
+                              (item) => item.value === event.target.value,
+                            );
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              raceDistancePreset: event.target.value,
+                              raceDistanceKm: preset?.km ?? prev.raceDistanceKm,
+                            }));
+                          }}
+                        >
+                          {raceDistancePresets.map((preset) => (
+                            <option key={preset.value} value={preset.value}>
+                              {preset.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    {planForm.raceDistancePreset === "custom" && (
+                      <label className="field-label">
+                        Custom distance (km)
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={planForm.raceDistanceKm}
+                          onChange={(event) =>
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              raceDistanceKm: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                    )}
+                    <div className="form-row form-row-three">
+                      <label className="field-label">
+                        Target hours
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          value={planForm.goalHours}
+                          onChange={(event) =>
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              goalHours: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="field-label">
+                        Target minutes
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          max="59"
+                          value={planForm.goalMinutes}
+                          onChange={(event) =>
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              goalMinutes: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="field-label">
+                        Target seconds
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          max="59"
+                          value={planForm.goalSeconds}
+                          onChange={(event) =>
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              goalSeconds: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <label className="field-label">
+                      Plan name
+                      <input
+                        className="input"
+                        value={planForm.generalPlanName}
+                        onChange={(event) =>
+                          setPlanForm((prev) => ({
+                            ...prev,
+                            generalPlanName: event.target.value,
+                          }))
+                        }
+                        placeholder="e.g. Base building block"
+                        required
+                      />
+                    </label>
+                    <label className="field-label">
+                      General goal
+                      <select
+                        className="select"
+                        value={planForm.generalGoalCategory}
+                        onChange={(event) =>
+                          setPlanForm((prev) => ({
+                            ...prev,
+                            generalGoalCategory: event.target
+                              .value as GeneralGoalCategory,
+                          }))
+                        }
+                      >
+                        {Object.entries(generalGoalLabels).map(
+                          ([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </label>
+                    {planForm.generalGoalCategory === "custom" && (
+                      <label className="field-label">
+                        Describe your goal
+                        <textarea
+                          className="textarea"
+                          value={planForm.generalGoalDescription}
+                          onChange={(event) =>
+                            setPlanForm((prev) => ({
+                              ...prev,
+                              generalGoalDescription: event.target.value,
+                            }))
+                          }
+                          placeholder="What are you working toward?"
+                        />
+                      </label>
+                    )}
+                    <label className="field-label">
+                      Plan end date
+                      <input
+                        className="input"
+                        type="date"
+                        value={planForm.planEndDate}
+                        onChange={(event) =>
+                          setPlanForm((prev) => ({
+                            ...prev,
+                            planEndDate: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  </>
+                )}
+
+                <label className="field-label">
+                  Weekly training days
+                  <span style={{ fontWeight: 400 }}>
+                    Pick the days you can run. Marking a day as "2x" allows an
+                    optional second run there when the plan needs the extra
+                    volume — it won't add one every week.
+                  </span>
+                </label>
+                <div className="day-picker">
+                  {weekdayOptions.map((day) => {
+                    const runs = planForm.weeklySchedule[day.value];
+                    return (
+                      <div
+                        key={day.value}
+                        className={`day-picker-cell ${runs ? "active" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          className="day-picker-toggle"
+                          aria-pressed={Boolean(runs)}
+                          onClick={() => toggleScheduleDay(day.value)}
+                        >
+                          {day.label}
+                        </button>
+                        <button
+                          type="button"
+                          className={`day-picker-double ${
+                            runs === 2 ? "active" : ""
+                          }`}
+                          disabled={!runs}
+                          title="Allow an optional second run on this day when needed"
+                          onClick={() =>
+                            setScheduleDayRuns(day.value, runs === 2 ? 1 : 2)
+                          }
+                        >
+                          {runs === 2 ? "2x" : "+2x"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  className="button"
+                  onClick={onCreatePlan}
+                  disabled={
+                    isPlanSubmitting ||
+                    Object.keys(planForm.weeklySchedule).length === 0
+                  }
+                >
+                  {isPlanSubmitting ? "Creating plan..." : "Create plan"}
                 </button>
               </div>
             </section>
