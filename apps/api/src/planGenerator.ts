@@ -136,8 +136,8 @@ function recommendedWeeklyDistance(
  * planned pace does not turn an aerobic day into a moderate workout.
  */
 const ZONE_PERCENT_VDOT: Partial<Record<WorkoutType, [number, number]>> = {
-  recovery: [0.48, 0.58],
-  easy: [0.52, 0.68],
+  recovery: [0.5, 0.6],
+  easy: [0.54, 0.68],
   long: [0.54, 0.7],
   tempo: [0.79, 0.84],
   threshold: [0.86, 0.9],
