@@ -62,10 +62,26 @@ const configuredChatDailyLimit = Number(process.env.CHAT_DAILY_LIMIT ?? 20);
 const chatDailyLimit = Number.isFinite(configuredChatDailyLimit)
   ? Math.max(1, Math.floor(configuredChatDailyLimit))
   : 20;
+const allowedWebOrigins = new Set([
+  process.env.WEB_URL ?? "http://localhost:3000",
+]);
 
 app.use(
   cors({
-    origin: process.env.WEB_URL ?? "http://localhost:3000",
+    origin: (origin, callback) => {
+      const isLocalDevelopmentOrigin =
+        process.env.NODE_ENV !== "production" &&
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin ?? "");
+      if (
+        !origin ||
+        allowedWebOrigins.has(origin) ||
+        isLocalDevelopmentOrigin
+      ) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Origin is not allowed by CORS"));
+    },
     credentials: true,
   }),
 );
