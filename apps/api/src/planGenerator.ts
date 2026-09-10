@@ -451,14 +451,17 @@ export function generatePlanWorkouts(
           ? "Build"
           : "Base";
 
-    const qualityType: WorkoutType =
-      volumeIntensityBalance <= 33
-        ? "tempo"
-        : isPeakWeek
+    const qualityType: WorkoutType = isPeakWeek
+      ? week % 2 === 0
+        ? "vo2max"
+        : "threshold"
+      : isBuildWeek
+        ? week % 3 === 0
           ? "vo2max"
-          : isBuildWeek
-            ? "threshold"
-            : "tempo";
+          : "threshold"
+        : week % 3 === 2
+          ? "threshold"
+          : "tempo";
     const qualityShareOfWeek = 0.14 + (volumeIntensityBalance / 100) * 0.12;
     const qualityEffort: Workout["effort"] =
       volumeIntensityBalance <= 33 ? "moderate" : "hard";
