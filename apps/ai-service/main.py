@@ -1,17 +1,20 @@
 import os
 import re
 import threading
+from pathlib import Path
 from queue import Queue
 from datetime import date, timedelta
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAIError
 from pydantic import BaseModel, Field
 
 from knowledge import KnowledgeBase, KnowledgeChunk
-from local_llm import LocalCoachModel
 from openai_llm import OpenAICoachModel
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 app = FastAPI(title='RunCoach AI Service')
 
@@ -28,7 +31,6 @@ class ChatRequest(BaseModel):
     question: str
     selected_coaches: list[str] = Field(default_factory=list)
     training_history: list[dict] = Field(default_factory=list)
-    model_provider: str = "local"
 
 
 class Source(BaseModel):
@@ -44,27 +46,9 @@ class ChatResponse(BaseModel):
 
 
 knowledge_base = KnowledgeBase(os.getenv("COACH_KNOWLEDGE_DB"))
-local_model = LocalCoachModel()
 openai_model = OpenAICoachModel()
-local_llm_timeout_seconds = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "5"))
 openai_timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "15"))
 generation_lock = threading.Lock()
-model_status = {"status": "loading", "error": None}
-
-
-@app.on_event("startup")
-def warm_local_model() -> None:
-    def load() -> None:
-        try:
-            local_model.warm_up()
-            model_status["status"] = "ready"
-            print("Local coach model loaded and ready")
-        except (ImportError, OSError, RuntimeError) as error:
-            model_status["status"] = "error"
-            model_status["error"] = str(error)
-            print(f"Local coach model is unavailable; fallback remains active: {error}")
-
-    threading.Thread(target=load, daemon=True).start()
 
 
 @app.get('/health')
@@ -72,35 +56,9 @@ def health():
     return {'ok': True}
 
 
-@app.get('/model-status')
-def model_status_endpoint():
-    return {
-        "status": model_status["status"],
-        "error": model_status["error"],
-        "model": local_model.model_name,
-        "adapter_path": str(local_model.adapter_path),
-    }
-
-
 @app.get('/coaches', response_model=list[str])
 def coaches():
     return knowledge_base.coaches()
-
-
-@app.get('/providers')
-def providers():
-    return [
-        {
-            "id": "local",
-            "label": "Local model",
-            "available": model_status["status"] == "ready",
-        },
-        {
-            "id": "openai",
-            "label": "OpenAI",
-            "available": openai_model.is_configured,
-        },
-    ]
 
 
 @app.post('/chat', response_model=ChatResponse)
@@ -113,19 +71,15 @@ def chat(request: ChatRequest):
             generation_mode="knowledge_fallback",
         )
 
-    provider = "openai" if request.model_provider == "openai" else "local"
-
     try:
-        answer = answer_with_timeout(
-            request.question, chunks, request.training_history, provider=provider
-        )
-        generation_mode = "openai" if provider == "openai" else "local_llm"
+        answer = answer_with_timeout(request.question, chunks, request.training_history)
+        generation_mode = "openai"
     except TimeoutError as error:
-        print(f"{provider} model exceeded its timeout; using fallback: {error}")
+        print(f"OpenAI model exceeded its timeout; using fallback: {error}")
         answer = fallback_answer(request.question, chunks, request.training_history)
         generation_mode = "knowledge_fallback"
     except (ImportError, OSError, RuntimeError, OpenAIError) as error:
-        print(f"{provider} model unavailable; using grounded fallback: {error}")
+        print(f"OpenAI model unavailable; using grounded fallback: {error}")
         answer = fallback_answer(request.question, chunks, request.training_history)
         generation_mode = "knowledge_fallback"
 
@@ -134,22 +88,6 @@ def chat(request: ChatRequest):
         sources=[Source(coach=item.coach, title=item.title, url=item.url) for item in chunks],
         generation_mode=generation_mode,
     )
-
-
-def answer_with_local_model(
-    question: str, chunks: list[KnowledgeChunk], training_history: list[dict]
-) -> str:
-    context = "\n\n".join(
-        f"[{index}] {item.coach} - {item.title}\n{item.content}"
-        for index, item in enumerate(chunks, start=1)
-    )
-    history_context = summarize_training_history(training_history)
-    answer = local_model.answer(
-        question, f"{context}\n\nRunner training history:\n{history_context}"
-    )
-    if not is_usable_model_answer(answer):
-        raise RuntimeError("Local model returned malformed or low-quality answer")
-    return answer
 
 
 def answer_with_openai_model(
@@ -172,18 +110,15 @@ def answer_with_timeout(
     question: str,
     chunks: list[KnowledgeChunk],
     training_history: list[dict],
-    provider: str = "local",
 ) -> str:
     if not generation_lock.acquire(blocking=False):
         raise TimeoutError("another generation is still running")
 
-    generator = answer_with_openai_model if provider == "openai" else answer_with_local_model
-    timeout_seconds = openai_timeout_seconds if provider == "openai" else local_llm_timeout_seconds
     result: Queue[tuple[str, object]] = Queue(maxsize=1)
 
     def generate() -> None:
         try:
-            result.put(("ok", generator(question, chunks, training_history)))
+            result.put(("ok", answer_with_openai_model(question, chunks, training_history)))
         except Exception as error:
             result.put(("error", error))
         finally:
@@ -191,7 +126,7 @@ def answer_with_timeout(
 
     threading.Thread(target=generate, daemon=True).start()
     try:
-        status, value = result.get(timeout=timeout_seconds)
+        status, value = result.get(timeout=openai_timeout_seconds)
     except Exception as error:
         raise TimeoutError("generation timed out") from error
     if status == "error":

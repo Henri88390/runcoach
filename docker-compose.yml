@@ -5,37 +5,10 @@ services:
       dockerfile: apps/ai-service/Dockerfile
     ports:
       - "8000:8000"
-    volumes:
-      - ai-models:/app/ai-service/models
-      - hf-cache:/root/.cache/huggingface
     environment:
-      LOCAL_ADAPTER_PATH: /app/ai-service/models/runcoach-coach-lora
-      TRAIN_EPOCHS: 1
-      TRAIN_MAX_LENGTH: 256
-      TRAIN_MAX_EXAMPLES: 20
-      TRAIN_CPU_THREADS: 4
-      LOCAL_LLM_MAX_NEW_TOKENS: 24
-      LOCAL_LLM_MAX_INPUT_TOKENS: 256
-      LOCAL_LLM_CPU_THREADS: 4
-      LOCAL_LLM_ON_CPU: "true"
-      LOCAL_LLM_TIMEOUT_SECONDS: 30
-      HF_HUB_DISABLE_XET: "1"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENAI_TIMEOUT_SECONDS: 15
-
-  ai-trainer:
-    build:
-      context: .
-      dockerfile: apps/ai-service/Dockerfile
-    profiles: [training]
-    command: ["python", "train.py"]
-    volumes:
-      - ai-models:/app/ai-service/models
-      - hf-cache:/root/.cache/huggingface
-    environment:
-      LOCAL_ADAPTER_PATH: /app/ai-service/models/runcoach-coach-lora
-      HF_HUB_DISABLE_XET: "1"
 
   postgres:
     image: postgres:16-alpine
@@ -56,6 +29,4 @@ services:
       retries: 10
 
 volumes:
-  ai-models:
-  hf-cache:
   runcoach-postgres-data:
