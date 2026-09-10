@@ -118,7 +118,7 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           GHCR_USERNAME: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_TOKEN: ${{ github.token }}
           IMAGE_PREFIX: ${{ steps.image_vars.outputs.image_prefix }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
           DEPLOY_PATH: ${{ secrets.DEV_DEPLOY_PATH }}
