@@ -395,11 +395,11 @@ export function generatePlanWorkouts(
     ? Math.round(
         clamp(
           request.recentWeeklyDistanceKm,
-          Math.max(10, targetWeeklyKm * 0.5),
-          targetWeeklyKm * 1.25,
+          Math.max(10, targetWeeklyKm * 0.75),
+          targetWeeklyKm * 1.5,
         ),
       )
-    : Math.round(targetWeeklyKm * 0.65);
+    : Math.round(targetWeeklyKm * 0.75);
   const longEntry = request.longRunDay
     ? (scheduleDays.find(
         (day) => day.offset === WEEKDAY_OFFSET[request.longRunDay!],
@@ -427,10 +427,11 @@ export function generatePlanWorkouts(
       !isPeakWeek &&
       weeksRemaining <= Math.max(3, Math.round(totalWeeks * 0.5));
 
-    const progression = Math.min(1, week / Math.max(1, totalWeeks - 2));
+    const buildWeeks = Math.min(5, Math.max(1, totalWeeks - 2));
+    const progression = Math.min(1, week / buildWeeks);
     const desiredWeeklyKm =
       startingWeeklyKm + (targetWeeklyKm - startingWeeklyKm) * progression;
-    const safeUpperBound = startingWeeklyKm * 1.08 ** week;
+    const safeUpperBound = startingWeeklyKm * 1.1 ** week;
     const safeLowerBound = startingWeeklyKm * 0.9 ** week;
     const progressedWeeklyKm = clamp(
       desiredWeeklyKm,
