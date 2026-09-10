@@ -149,6 +149,15 @@ export async function initializeDatabase() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_request_limits (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      window_start DATE NOT NULL,
+      request_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, window_start)
+    )
+  `);
+
   await pool.query(
     "ALTER TABLE workouts ADD COLUMN IF NOT EXISTS plan_id TEXT REFERENCES training_plans(id) ON DELETE CASCADE",
   );
@@ -228,6 +237,21 @@ export async function listWorkouts(userId: string) {
     [userId],
   );
   return result.rows.map(mapWorkout);
+}
+
+export async function consumeChatRequest(userId: string, dailyLimit: number) {
+  const result = await pool.query<{ request_count: number }>(
+    `
+      INSERT INTO chat_request_limits (user_id, window_start, request_count)
+      VALUES ($1, CURRENT_DATE, 1)
+      ON CONFLICT (user_id, window_start) DO UPDATE
+      SET request_count = chat_request_limits.request_count + 1
+      WHERE chat_request_limits.request_count < $2
+      RETURNING request_count
+    `,
+    [userId, dailyLimit],
+  );
+  return result.rows.length > 0;
 }
 
 export async function getWorkout(id: string, userId: string) {

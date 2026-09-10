@@ -42,6 +42,9 @@ to 15 seconds. Rebuild the `ai-service` after changing its code or dependencies:
 docker compose up -d --build ai-service
 ```
 
+The API limits each account to 20 coach-chat requests per day by default. Set
+`CHAT_DAILY_LIMIT` in the repository-root `.env` to change that allowance.
+
 Add source-linked coach material in `apps/ai-service/knowledge.py`. Keep
 summaries original and concise, use sources you are allowed to store, and do
 not copy entire copyrighted books or articles into the repository.

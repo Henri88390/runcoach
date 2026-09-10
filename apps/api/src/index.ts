@@ -15,6 +15,7 @@ import type {
   WorkoutDetails,
 } from "@runcoach/types";
 import {
+  consumeChatRequest,
   createTrainingPlan,
   createWorkout,
   deleteTrainingPlan,
@@ -57,6 +58,10 @@ dotenv.config({ path: "../../.env" });
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
+const configuredChatDailyLimit = Number(process.env.CHAT_DAILY_LIMIT ?? 20);
+const chatDailyLimit = Number.isFinite(configuredChatDailyLimit)
+  ? Math.max(1, Math.floor(configuredChatDailyLimit))
+  : 20;
 
 app.use(
   cors({
@@ -522,6 +527,19 @@ app.post(
           generationMode: "knowledge_fallback",
         },
         message: "Question is required",
+      });
+      return;
+    }
+
+    if (!(await consumeChatRequest(req.user!.id, chatDailyLimit))) {
+      res.status(429).json({
+        success: false,
+        data: {
+          answer: "",
+          sources: [],
+          generationMode: "knowledge_fallback",
+        },
+        message: `Daily coach chat limit reached (${chatDailyLimit} requests). Try again tomorrow.`,
       });
       return;
     }
