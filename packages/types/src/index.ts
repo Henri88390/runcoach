@@ -101,6 +101,8 @@ export interface TrainingPlanRequest {
   selectedCoaches: string[];
   weeklySchedule: WeeklySchedule;
   longRunDay?: PlanWeekday;
+  /** 0 favors training volume; 100 favors workout intensity. */
+  volumeIntensityBalance?: number;
   /** Average weekly completed distance from the runner's recent history. */
   recentWeeklyDistanceKm?: number;
   /** Recent race result used to compute VDOT-based training paces. */

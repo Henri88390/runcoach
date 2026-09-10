@@ -33,7 +33,11 @@ function addDays(date: Date, days: number): Date {
 }
 
 function toDateString(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 function mondayOf(date: Date): Date {
@@ -114,8 +118,11 @@ function recommendedWeeklyDistance(
   const ambitionDemand = clamp(goalVdot - currentVdot, 0, 15) * 1.3;
   const raceDemand =
     request.goalType === "precise" ? (request.raceDistanceKm ?? 0) * 0.6 : 6;
+  const balance = clamp(request.volumeIntensityBalance ?? 50, 0, 100);
+  const volumeMultiplier = 1.2 - balance / 250;
   const recommended =
-    availableSessions * 5 + performanceDemand + ambitionDemand + raceDemand;
+    (availableSessions * 5 + performanceDemand + ambitionDemand + raceDemand) *
+    volumeMultiplier;
 
   return Math.round(
     clamp(recommended, availableSessions * 6, availableSessions * 18),
@@ -301,6 +308,8 @@ type Session = {
 function buildOtherSessions(
   otherDays: ScheduleDay[],
   qualityType: WorkoutType,
+  qualityShareOfWeek: number,
+  qualityEffort: Workout["effort"],
 ): Session[] {
   const qualityIndex =
     otherDays.length === 1 ? 0 : Math.floor((otherDays.length - 1) / 2);
@@ -310,8 +319,8 @@ function buildOtherSessions(
       return {
         offset: day.offset,
         type: qualityType,
-        shareOfWeek: 0.2,
-        effort: "hard",
+        shareOfWeek: qualityShareOfWeek,
+        effort: qualityEffort,
         doubles: day.doubles,
       };
     }
@@ -366,6 +375,11 @@ export function generatePlanWorkouts(
   const totalWeeks = Math.max(2, Math.ceil(totalDays / 7));
   const note = coachNote(request.selectedCoaches);
   const vdot = resolveVdot(request);
+  const volumeIntensityBalance = clamp(
+    request.volumeIntensityBalance ?? 50,
+    0,
+    100,
+  );
 
   const scheduleDays = scheduleOffsets(request.weeklySchedule);
   const availableSessions = scheduleDays.reduce(
@@ -436,18 +450,30 @@ export function generatePlanWorkouts(
           ? "Build"
           : "Base";
 
-    const qualityType: WorkoutType = isPeakWeek
-      ? "vo2max"
-      : isBuildWeek
-        ? "threshold"
-        : "tempo";
+    const qualityType: WorkoutType =
+      volumeIntensityBalance <= 33
+        ? "tempo"
+        : isPeakWeek
+          ? "vo2max"
+          : isBuildWeek
+            ? "threshold"
+            : "tempo";
+    const qualityShareOfWeek = 0.14 + (volumeIntensityBalance / 100) * 0.12;
+    const qualityEffort: Workout["effort"] =
+      volumeIntensityBalance <= 33 ? "moderate" : "hard";
+    const longRunShareOfWeek = 0.34 - (volumeIntensityBalance / 100) * 0.08;
 
     const sessions: Session[] = [
-      ...buildOtherSessions(otherDays, qualityType),
+      ...buildOtherSessions(
+        otherDays,
+        qualityType,
+        qualityShareOfWeek,
+        qualityEffort,
+      ),
       {
         offset: longEntry.offset,
         type: isRaceWeek ? "easy" : "long",
-        shareOfWeek: isRaceWeek ? 0.12 : 0.3,
+        shareOfWeek: isRaceWeek ? 0.12 : longRunShareOfWeek,
         effort: isRaceWeek ? "easy" : "moderate",
         doubles: isRaceWeek ? false : longEntry.doubles,
       },

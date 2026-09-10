@@ -140,6 +140,7 @@ export async function initializeDatabase() {
       selected_coaches TEXT[] NOT NULL DEFAULT '{}',
       weekly_schedule JSONB NOT NULL DEFAULT '{}',
       long_run_day TEXT,
+      volume_intensity_balance INTEGER NOT NULL DEFAULT 50,
       recent_race_distance_km NUMERIC(8, 2),
       recent_race_time_seconds INTEGER,
       status TEXT NOT NULL DEFAULT 'queued',
@@ -162,6 +163,9 @@ export async function initializeDatabase() {
   );
   await pool.query(
     "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS long_run_day TEXT",
+  );
+  await pool.query(
+    "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS volume_intensity_balance INTEGER NOT NULL DEFAULT 50",
   );
   await pool.query(
     "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS recent_race_distance_km NUMERIC(8, 2)",
@@ -363,6 +367,7 @@ type TrainingPlanRow = {
   selected_coaches: string[];
   weekly_schedule: TrainingPlan["weeklySchedule"];
   long_run_day: TrainingPlan["longRunDay"] | null;
+  volume_intensity_balance: number;
   recent_race_distance_km: number | string | null;
   recent_race_time_seconds: number | null;
   status: TrainingPlan["status"];
@@ -387,6 +392,7 @@ const mapTrainingPlan = (row: TrainingPlanRow): TrainingPlan => ({
   selectedCoaches: row.selected_coaches,
   weeklySchedule: row.weekly_schedule ?? {},
   longRunDay: row.long_run_day ?? undefined,
+  volumeIntensityBalance: row.volume_intensity_balance,
   recentRaceDistanceKm:
     row.recent_race_distance_km === null
       ? undefined
@@ -411,9 +417,9 @@ export async function createTrainingPlan(
         id, user_id, name, goal_type, race_name, race_distance_km, goal_date,
         start_date, goal_time_seconds, general_goal_category,
         general_goal_description, selected_coaches, weekly_schedule,
-        long_run_day, recent_race_distance_km, recent_race_time_seconds, status
+        long_run_day, volume_intensity_balance, recent_race_distance_km, recent_race_time_seconds, status
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, $9, $10, $11, $12, $13, $14, $15, $16, 'queued')
+      VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'queued')
       RETURNING *
     `,
     [
@@ -431,6 +437,7 @@ export async function createTrainingPlan(
       request.selectedCoaches ?? [],
       JSON.stringify(request.weeklySchedule ?? {}),
       request.longRunDay ?? null,
+      request.volumeIntensityBalance ?? 50,
       request.recentRaceDistanceKm ?? null,
       request.recentRaceTimeSeconds ?? null,
     ],

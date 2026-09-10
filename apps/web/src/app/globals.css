@@ -555,6 +555,29 @@ main {
   border-color: transparent;
 }
 
+.volume-intensity-control {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.volume-intensity-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.volume-intensity-slider {
+  width: 100%;
+  accent-color: var(--primary);
+  cursor: ew-resize;
+}
+
 .workout-list {
   display: grid;
   gap: 12px;

@@ -691,6 +691,17 @@ app.post(
       return;
     }
     if (
+      body.volumeIntensityBalance !== undefined &&
+      (body.volumeIntensityBalance < 0 || body.volumeIntensityBalance > 100)
+    ) {
+      res.status(400).json({
+        success: false,
+        data: null as never,
+        message: "The volume and intensity balance must be between 0 and 100",
+      });
+      return;
+    }
+    if (
       (body.recentRaceDistanceKm && !body.recentRaceTimeSeconds) ||
       (!body.recentRaceDistanceKm && body.recentRaceTimeSeconds)
     ) {

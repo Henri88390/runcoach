@@ -131,6 +131,7 @@ type TrainingPlan = {
   selectedCoaches: string[];
   weeklySchedule: WeeklySchedule;
   longRunDay?: PlanWeekday;
+  volumeIntensityBalance?: number;
   status: TrainingPlanStatus;
   error?: string;
   createdAt: string;
@@ -153,6 +154,7 @@ type PlanForm = {
   selectedCoaches: string[];
   weeklySchedule: WeeklySchedule;
   longRunDay: "" | PlanWeekday;
+  volumeIntensityBalance: number;
   hasRecentRace: boolean;
   recentRaceDistancePreset: string;
   recentRaceDistanceKm: number;
@@ -202,6 +204,7 @@ const defaultPlanForm: PlanForm = {
   selectedCoaches: [],
   weeklySchedule: defaultWeeklySchedule,
   longRunDay: "",
+  volumeIntensityBalance: 50,
   hasRecentRace: false,
   recentRaceDistancePreset: "10k",
   recentRaceDistanceKm: 10,
@@ -879,6 +882,7 @@ export default function HomePage() {
               selectedCoaches: planForm.selectedCoaches,
               weeklySchedule: planForm.weeklySchedule,
               longRunDay,
+              volumeIntensityBalance: planForm.volumeIntensityBalance,
               ...recentRace,
             }
           : {
@@ -891,6 +895,7 @@ export default function HomePage() {
               selectedCoaches: planForm.selectedCoaches,
               weeklySchedule: planForm.weeklySchedule,
               longRunDay,
+              volumeIntensityBalance: planForm.volumeIntensityBalance,
               ...recentRace,
             };
 
@@ -2468,6 +2473,27 @@ export default function HomePage() {
                     Choose one of your training days, or leave this automatic.
                   </span>
                 </label>
+
+                <div className="volume-intensity-control">
+                  <div className="volume-intensity-labels" aria-hidden="true">
+                    <span>Volume</span>
+                    <span>Intensity</span>
+                  </div>
+                  <input
+                    className="volume-intensity-slider"
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={planForm.volumeIntensityBalance}
+                    aria-label="Training volume and intensity balance"
+                    onChange={(event) =>
+                      setPlanForm((prev) => ({
+                        ...prev,
+                        volumeIntensityBalance: Number(event.target.value),
+                      }))
+                    }
+                  />
+                </div>
 
                 <button
                   className="button"
