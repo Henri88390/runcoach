@@ -102,6 +102,39 @@ The API uses `postgresql://runcoach:runcoach@localhost:5432/runcoach` by default
 To use a different database, copy `.env.example` to `.env` in the repository root
 and set `DATABASE_URL`.
 
+## Container deployment
+
+The web app, API, and AI service each have a production Docker image. Local
+Compose runs all three services plus PostgreSQL:
+
+```powershell
+docker compose up --build
+```
+
+The `develop` branch deploys immutable commit-tagged images through
+`.github/workflows/deploy-dev.yml`. The workflow publishes images to GitHub
+Container Registry, then updates the application services on a Docker host
+over SSH. PostgreSQL is expected to be managed separately for deployments.
+
+Configure the GitHub `development` environment with these secrets:
+
+- `DEV_HOST`, `DEV_USER`, `DEV_SSH_KEY`, and `DEV_DEPLOY_PATH`
+- `GHCR_PULL_TOKEN` with permission to read packages
+
+The deployment host must have Docker Compose v2, a `.env` file at
+`DEV_DEPLOY_PATH`, and a writable deployment directory. Its `.env` must define
+`DATABASE_URL`, `WEB_URL`, and `API_PUBLIC_URL`, along with the application
+secrets listed in `.env.example`. Configure `DEV_WEB_URL` and `DEV_API_URL` as
+GitHub environment variables for the final smoke tests. The web image receives
+`DEV_API_URL` as its build-time `NEXT_PUBLIC_API_BASE_URL` value.
+
+Create the branch and trigger the first deployment with:
+
+```powershell
+git switch -c develop
+git push -u origin develop
+```
+
 ## Default data
 
 The MVP ships with synthetic training data. The API seeds that data into PostgreSQL
