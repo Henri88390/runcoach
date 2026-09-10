@@ -2407,8 +2407,8 @@ export default function HomePage() {
                 <label className="field-label">
                   Weekly training days
                   <span style={{ fontWeight: 400 }}>
-                    Pick the days you can run. Marking a day as {"\"2x\""} allows an
-                    optional second run there when the plan needs the extra
+                    Pick the days you can run. Marking a day as {'"2x"'} allows
+                    an optional second run there when the plan needs the extra
                     volume — it won&apos;t add one every week.
                   </span>
                 </label>
