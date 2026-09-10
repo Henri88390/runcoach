@@ -5,7 +5,6 @@ RunCoach AI is a monorepo MVP for a Strava-inspired running dashboard with:
 - Next.js dashboard for weekly training history and workout details
 - Node.js/TypeScript API for workouts and chat orchestration
 - Python/FastAPI AI service for running advice based on coach principles
-- AWS CDK infrastructure skeleton for deployment
 - Shared TypeScript contracts under the packages folder
 
 ## Local development

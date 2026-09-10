@@ -4,11 +4,10 @@
   "version": "0.1.0",
   "workspaces": [
     "apps/*",
-    "packages/*",
-    "infrastructure"
+    "packages/*"
   ],
   "scripts": {
-    "build": "npm --workspace @runcoach/types run build && npm --workspace @runcoach/config run build && npm --workspace @runcoach/api run build && npm --workspace @runcoach/web run build && npm --workspace @runcoach/infrastructure run build",
+    "build": "npm --workspace @runcoach/types run build && npm --workspace @runcoach/config run build && npm --workspace @runcoach/api run build && npm --workspace @runcoach/web run build",
     "dev": "concurrently \"npm --workspace apps/api run dev\" \"npm --workspace apps/web run dev\" \"npm run dev:ai\"",
     "dev:web": "npm --workspace apps/web run dev",
     "dev:api": "npm --workspace apps/api run dev",
