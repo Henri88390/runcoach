@@ -53,6 +53,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Normalize container image owner
+        id: image_vars
+        shell: bash
+        run: echo "image_prefix=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -66,7 +71,7 @@ jobs:
           context: .
           file: apps/api/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/runcoach-api:${{ env.IMAGE_TAG }}
+          tags: ${{ steps.image_vars.outputs.image_prefix }}/runcoach-api:${{ env.IMAGE_TAG }}
 
       - name: Build and push AI image
         uses: docker/build-push-action@v6
@@ -74,7 +79,7 @@ jobs:
           context: .
           file: apps/ai-service/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/runcoach-ai-service:${{ env.IMAGE_TAG }}
+          tags: ${{ steps.image_vars.outputs.image_prefix }}/runcoach-ai-service:${{ env.IMAGE_TAG }}
 
       - name: Build and push web image
         uses: docker/build-push-action@v6
@@ -84,7 +89,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_API_BASE_URL=${{ vars.DEV_API_URL }}
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/runcoach-web:${{ env.IMAGE_TAG }}
+          tags: ${{ steps.image_vars.outputs.image_prefix }}/runcoach-web:${{ env.IMAGE_TAG }}
 
   deploy:
     name: Deploy development services
@@ -94,6 +99,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Normalize container image owner
+        id: image_vars
+        shell: bash
+        run: echo "image_prefix=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - name: Copy deployment Compose file
         uses: appleboy/scp-action@v0.1.7
@@ -109,7 +119,7 @@ jobs:
         env:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
-          IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+          IMAGE_PREFIX: ${{ steps.image_vars.outputs.image_prefix }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
           DEPLOY_PATH: ${{ secrets.DEV_DEPLOY_PATH }}
         with:
