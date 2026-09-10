@@ -776,6 +776,39 @@ main {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.time-picker {
+  position: relative;
+}
+
+.time-picker-input {
+  cursor: pointer;
+}
+
+.time-picker-menu {
+  position: fixed;
+  z-index: 11;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(88px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel-alt);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: 0 12px 24px var(--shadow);
+}
+
+.time-picker-menu label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.time-picker-menu .select {
+  padding: 8px 32px 8px 8px;
+}
+
 .input,
 .select,
 .textarea {
@@ -785,6 +818,14 @@ main {
   background: rgba(15, 23, 42, 0.75);
   color: var(--text);
   padding: 10px 12px;
+}
+
+.select {
+  appearance: none;
+  padding-right: 38px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23a3b5c9' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
 }
 
 .textarea {

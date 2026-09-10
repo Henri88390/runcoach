@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { formatEnglishDate, formatEnglishDateRange } from "../lib/date-format";
 
 const API_BASE =
@@ -195,6 +196,166 @@ const defaultPlanForm: PlanForm = {
   recentRaceMinutes: 45,
   recentRaceSeconds: 0,
 };
+
+const timeOptions = {
+  hours: Array.from({ length: 24 }, (_, value) => value),
+  minutesAndSeconds: Array.from({ length: 60 }, (_, value) => value),
+};
+
+const formatClockTime = (hours: number, minutes: number, seconds: number) =>
+  [hours, minutes, seconds]
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":");
+
+type TimePickerProps = {
+  label: string;
+  hours: number;
+  minutes: number;
+  seconds: number;
+  onChange: (hours: number, minutes: number, seconds: number) => void;
+};
+
+function TimePicker({
+  label,
+  hours,
+  minutes,
+  seconds,
+  onChange,
+}: TimePickerProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({
+    top: 0,
+    left: 0,
+    width: 0,
+  });
+  const triggerRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const updateMenuPosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const horizontalMargin = 24;
+      const width = Math.min(360, window.innerWidth - horizontalMargin * 2);
+      setMenuPosition({
+        top: rect.bottom + 6,
+        left: Math.min(rect.left, window.innerWidth - width - horizontalMargin),
+        width,
+      });
+    };
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
+  }, [isOpen]);
+
+  const updateTime = (unit: "hours" | "minutes" | "seconds", value: number) => {
+    onChange(
+      unit === "hours" ? value : hours,
+      unit === "minutes" ? value : minutes,
+      unit === "seconds" ? value : seconds,
+    );
+  };
+
+  return (
+    <div
+      className="time-picker"
+      onBlur={(event) => {
+        const nextFocusedElement = event.relatedTarget as Node | null;
+        if (
+          !event.currentTarget.contains(nextFocusedElement) &&
+          !menuRef.current?.contains(nextFocusedElement)
+        ) {
+          setIsOpen(false);
+        }
+      }}
+    >
+      <label className="field-label">
+        {label}
+        <input
+          ref={triggerRef}
+          className="input time-picker-input"
+          type="text"
+          readOnly
+          value={formatClockTime(hours, minutes, seconds)}
+          aria-haspopup="dialog"
+          onClick={() => setIsOpen(true)}
+          onFocus={() => setIsOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setIsOpen(false);
+          }}
+        />
+      </label>
+      {isOpen &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="time-picker-menu"
+            role="dialog"
+            aria-label={`${label} selector`}
+            style={menuPosition}
+          >
+            <label>
+              Hours
+              <select
+                className="select"
+                value={hours}
+                onChange={(event) =>
+                  updateTime("hours", Number(event.target.value))
+                }
+              >
+                {timeOptions.hours.map((value) => (
+                  <option key={value} value={value}>
+                    {String(value).padStart(2, "0")}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Minutes
+              <select
+                className="select"
+                value={minutes}
+                onChange={(event) =>
+                  updateTime("minutes", Number(event.target.value))
+                }
+              >
+                {timeOptions.minutesAndSeconds.map((value) => (
+                  <option key={value} value={value}>
+                    {String(value).padStart(2, "0")}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Seconds
+              <select
+                className="select"
+                value={seconds}
+                onChange={(event) =>
+                  updateTime("seconds", Number(event.target.value))
+                }
+              >
+                {timeOptions.minutesAndSeconds.map((value) => (
+                  <option key={value} value={value}>
+                    {String(value).padStart(2, "0")}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}
 
 const initialMessages: ChatMessage[] = [
   {
@@ -1875,7 +2036,7 @@ export default function HomePage() {
                     assumed.
                   </span>
                   {planForm.hasRecentRace && (
-                    <div className="form-row form-row-three">
+                    <div className="form-row">
                       <label className="field-label">
                         Distance
                         <select
@@ -1920,53 +2081,20 @@ export default function HomePage() {
                           />
                         </label>
                       )}
-                      <label className="field-label">
-                        Hours
-                        <input
-                          className="input"
-                          type="number"
-                          min="0"
-                          value={planForm.recentRaceHours}
-                          onChange={(event) =>
-                            setPlanForm((prev) => ({
-                              ...prev,
-                              recentRaceHours: Number(event.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className="field-label">
-                        Minutes
-                        <input
-                          className="input"
-                          type="number"
-                          min="0"
-                          max="59"
-                          value={planForm.recentRaceMinutes}
-                          onChange={(event) =>
-                            setPlanForm((prev) => ({
-                              ...prev,
-                              recentRaceMinutes: Number(event.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className="field-label">
-                        Seconds
-                        <input
-                          className="input"
-                          type="number"
-                          min="0"
-                          max="59"
-                          value={planForm.recentRaceSeconds}
-                          onChange={(event) =>
-                            setPlanForm((prev) => ({
-                              ...prev,
-                              recentRaceSeconds: Number(event.target.value),
-                            }))
-                          }
-                        />
-                      </label>
+                      <TimePicker
+                        label="Recent race time"
+                        hours={planForm.recentRaceHours}
+                        minutes={planForm.recentRaceMinutes}
+                        seconds={planForm.recentRaceSeconds}
+                        onChange={(hours, minutes, seconds) =>
+                          setPlanForm((prev) => ({
+                            ...prev,
+                            recentRaceHours: hours,
+                            recentRaceMinutes: minutes,
+                            recentRaceSeconds: seconds,
+                          }))
+                        }
+                      />
                     </div>
                   )}
                 </fieldset>
@@ -2076,54 +2204,21 @@ export default function HomePage() {
                         />
                       </label>
                     )}
-                    <div className="form-row form-row-three">
-                      <label className="field-label">
-                        Target hours
-                        <input
-                          className="input"
-                          type="number"
-                          min="0"
-                          value={planForm.goalHours}
-                          onChange={(event) =>
-                            setPlanForm((prev) => ({
-                              ...prev,
-                              goalHours: Number(event.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className="field-label">
-                        Target minutes
-                        <input
-                          className="input"
-                          type="number"
-                          min="0"
-                          max="59"
-                          value={planForm.goalMinutes}
-                          onChange={(event) =>
-                            setPlanForm((prev) => ({
-                              ...prev,
-                              goalMinutes: Number(event.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                      <label className="field-label">
-                        Target seconds
-                        <input
-                          className="input"
-                          type="number"
-                          min="0"
-                          max="59"
-                          value={planForm.goalSeconds}
-                          onChange={(event) =>
-                            setPlanForm((prev) => ({
-                              ...prev,
-                              goalSeconds: Number(event.target.value),
-                            }))
-                          }
-                        />
-                      </label>
+                    <div className="form-row">
+                      <TimePicker
+                        label="Target time"
+                        hours={planForm.goalHours}
+                        minutes={planForm.goalMinutes}
+                        seconds={planForm.goalSeconds}
+                        onChange={(hours, minutes, seconds) =>
+                          setPlanForm((prev) => ({
+                            ...prev,
+                            goalHours: hours,
+                            goalMinutes: minutes,
+                            goalSeconds: seconds,
+                          }))
+                        }
+                      />
                     </div>
                   </>
                 ) : (
