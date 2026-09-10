@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Build workspaces
+        run: npm run build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install AI service dependencies
+        run: pip install -r apps/ai-service/requirements.txt
+
+      - name: Compile AI service
+        run: python -m py_compile apps/ai-service/main.py apps/ai-service/openai_llm.py apps/ai-service/knowledge.py
