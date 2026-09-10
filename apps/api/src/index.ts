@@ -25,6 +25,7 @@ import {
   listTrainingPlans,
   listWorkouts,
   pool,
+  trainingPlanNameExists,
   updateWorkout,
 } from "./db.js";
 import { enqueuePlanGeneration } from "./planQueue.js";
@@ -636,6 +637,15 @@ app.post(
       });
       return;
     }
+    const today = new Date().toISOString().slice(0, 10);
+    if (body.goalDate <= today) {
+      res.status(400).json({
+        success: false,
+        data: null as never,
+        message: "The goal date must be after today",
+      });
+      return;
+    }
     if (
       body.goalType === "precise" &&
       (!body.raceDistanceKm || !body.goalTimeSeconds)
@@ -672,6 +682,14 @@ app.post(
       });
       return;
     }
+    if (body.longRunDay && !body.weeklySchedule[body.longRunDay]) {
+      res.status(400).json({
+        success: false,
+        data: null as never,
+        message: "The long-run day must be one of the selected training days",
+      });
+      return;
+    }
     if (
       (body.recentRaceDistanceKm && !body.recentRaceTimeSeconds) ||
       (!body.recentRaceDistanceKm && body.recentRaceTimeSeconds)
@@ -692,9 +710,20 @@ app.post(
           ? `${body.raceName ?? "Race"} plan`
           : "Training plan"),
       startDate: body.startDate || new Date().toISOString().slice(0, 10),
+      recentWeeklyDistanceKm: calculateRecentWeeklyDistance(
+        await listWorkouts(req.user!.id),
+      ),
     };
 
     try {
+      if (await trainingPlanNameExists(planRequest.name!, req.user!.id)) {
+        res.status(409).json({
+          success: false,
+          data: null as never,
+          message: "You already have a training plan with that name",
+        });
+        return;
+      }
       const plan = await createTrainingPlan(planRequest, req.user!.id);
       enqueuePlanGeneration({
         planId: plan.id,
@@ -834,6 +863,24 @@ function buildWeeklySummaries(workouts: Workout[]) {
         second.date.localeCompare(first.date),
       ),
     }));
+}
+
+function calculateRecentWeeklyDistance(
+  workouts: Workout[],
+): number | undefined {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const earliestDate = new Date(today);
+  earliestDate.setDate(earliestDate.getDate() - 27);
+  const totalDistanceKm = workouts.reduce((total, workout) => {
+    const workoutDate = new Date(`${workout.date}T00:00:00`);
+    const isRecent = workoutDate >= earliestDate && workoutDate <= today;
+    return isRecent && workout.completed
+      ? total + (workout.distanceKm ?? 0)
+      : total;
+  }, 0);
+
+  return totalDistanceKm > 0 ? totalDistanceKm / 4 : undefined;
 }
 
 function generateAiAnswer(question: string): ChatResponse {

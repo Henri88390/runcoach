@@ -100,6 +100,16 @@ const weekdayOptions: { value: PlanWeekday; label: string }[] = [
   { value: "sun", label: "Sun" },
 ];
 
+const weekdayNames: Record<PlanWeekday, string> = {
+  mon: "Monday",
+  tue: "Tuesday",
+  wed: "Wednesday",
+  thu: "Thursday",
+  fri: "Friday",
+  sat: "Saturday",
+  sun: "Sunday",
+};
+
 const defaultWeeklySchedule: WeeklySchedule = {
   tue: 1,
   thu: 1,
@@ -120,6 +130,7 @@ type TrainingPlan = {
   generalGoalDescription?: string;
   selectedCoaches: string[];
   weeklySchedule: WeeklySchedule;
+  longRunDay?: PlanWeekday;
   status: TrainingPlanStatus;
   error?: string;
   createdAt: string;
@@ -141,6 +152,7 @@ type PlanForm = {
   startDate: string;
   selectedCoaches: string[];
   weeklySchedule: WeeklySchedule;
+  longRunDay: "" | PlanWeekday;
   hasRecentRace: boolean;
   recentRaceDistancePreset: string;
   recentRaceDistanceKm: number;
@@ -189,6 +201,7 @@ const defaultPlanForm: PlanForm = {
   startDate: "",
   selectedCoaches: [],
   weeklySchedule: defaultWeeklySchedule,
+  longRunDay: "",
   hasRecentRace: false,
   recentRaceDistancePreset: "10k",
   recentRaceDistanceKm: 10,
@@ -396,6 +409,18 @@ const formatPace = (durationMinutes: number, distanceKm?: number) => {
   return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
 };
 
+const recalculateWeeklyTotals = (week: WeeklyWorkoutSummary) => ({
+  ...week,
+  totalDistanceKm: week.workouts.reduce(
+    (total, workout) => total + (workout.distanceKm ?? 0),
+    0,
+  ),
+  totalMinutes: week.workouts.reduce(
+    (total, workout) => total + workout.durationMinutes,
+    0,
+  ),
+});
+
 const renderCitedAnswer = (content: string, sources: ChatMessage["sources"]) =>
   content.split(/(\[\d+\])/g).map((part, index) => {
     const citation = /^\[(\d+)\]$/.exec(part);
@@ -464,6 +489,7 @@ export default function HomePage() {
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
   const [isPlanSubmitting, setIsPlanSubmitting] = useState(false);
   const [planMessage, setPlanMessage] = useState("");
+  const [planNameError, setPlanNameError] = useState("");
   const [planForm, setPlanForm] = useState<PlanForm>(defaultPlanForm);
   const [planToDelete, setPlanToDelete] = useState<TrainingPlan | null>(null);
 
@@ -817,14 +843,16 @@ export default function HomePage() {
 
   const onCreatePlan = async () => {
     if (planForm.goalType === "general" && !planForm.generalPlanName.trim()) {
-      setPlanMessage("A plan name is required for a general goal plan.");
+      setPlanNameError("A plan name is required for a general goal plan.");
       return;
     }
 
     setIsPlanSubmitting(true);
     setPlanMessage("");
+    setPlanNameError("");
 
     try {
+      const longRunDay = planForm.longRunDay || undefined;
       const recentRace = planForm.hasRecentRace
         ? {
             recentRaceDistanceKm: Number(planForm.recentRaceDistanceKm),
@@ -850,6 +878,7 @@ export default function HomePage() {
                 planForm.goalSeconds,
               selectedCoaches: planForm.selectedCoaches,
               weeklySchedule: planForm.weeklySchedule,
+              longRunDay,
               ...recentRace,
             }
           : {
@@ -861,6 +890,7 @@ export default function HomePage() {
               startDate: planForm.startDate || undefined,
               selectedCoaches: planForm.selectedCoaches,
               weeklySchedule: planForm.weeklySchedule,
+              longRunDay,
               ...recentRace,
             };
 
@@ -871,6 +901,13 @@ export default function HomePage() {
       });
       const payload = await response.json();
       if (!response.ok || !payload.success) {
+        if (response.status === 409) {
+          setPlanNameError(
+            payload.message ??
+              "You already have a training plan with that name",
+          );
+          return;
+        }
         throw new Error(
           payload.message ?? "Could not create the training plan",
         );
@@ -919,7 +956,12 @@ export default function HomePage() {
       } else {
         next[day] = 1;
       }
-      return { ...prev, weeklySchedule: next };
+      return {
+        ...prev,
+        weeklySchedule: next,
+        longRunDay:
+          prev.longRunDay === day && !next[day] ? "" : prev.longRunDay,
+      };
     });
   };
 
@@ -937,6 +979,7 @@ export default function HomePage() {
         (workout) => !(workout.source === "plan" && !workout.completed),
       ),
     }))
+    .map(recalculateWeeklyTotals)
     .filter((week) => week.workouts.length > 0);
 
   const planWeekly = (planId: string) =>
@@ -949,6 +992,7 @@ export default function HomePage() {
             !(workout.source === "plan" && !workout.completed),
         ),
       }))
+      .map(recalculateWeeklyTotals)
       .filter((week) => week.workouts.length > 0);
 
   const activePlan = plans.find((plan) => plan.id === activeTab);
@@ -1075,11 +1119,46 @@ export default function HomePage() {
               marginBottom: 20,
             }}
           >
-            <h2 style={{ margin: 0 }}>
-              {activeTab === "history"
-                ? "Training history"
-                : (activePlan?.name ?? "Training plan")}
-            </h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <h2 style={{ margin: 0 }}>
+                {activeTab === "history"
+                  ? "Training history"
+                  : (activePlan?.name ?? "Training plan")}
+              </h2>
+              {activePlan && (
+                <details className="metrics-menu" ref={metricsMenuRef}>
+                  <summary>Display options</summary>
+                  <div className="metrics-menu-content">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={visibleMetrics.distance}
+                        onChange={(event) =>
+                          setVisibleMetrics((current) => ({
+                            ...current,
+                            distance: event.target.checked,
+                          }))
+                        }
+                      />
+                      Distance
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={visibleMetrics.time}
+                        onChange={(event) =>
+                          setVisibleMetrics((current) => ({
+                            ...current,
+                            time: event.target.checked,
+                          }))
+                        }
+                      />
+                      Time
+                    </label>
+                  </div>
+                </details>
+              )}
+            </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {activePlan && (
                 <button
@@ -1092,37 +1171,39 @@ export default function HomePage() {
                   🗑
                 </button>
               )}
-              <details className="metrics-menu" ref={metricsMenuRef}>
-                <summary>Choose metrics</summary>
-                <div className="metrics-menu-content">
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={visibleMetrics.distance}
-                      onChange={(event) =>
-                        setVisibleMetrics((current) => ({
-                          ...current,
-                          distance: event.target.checked,
-                        }))
-                      }
-                    />
-                    Distance
-                  </label>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={visibleMetrics.time}
-                      onChange={(event) =>
-                        setVisibleMetrics((current) => ({
-                          ...current,
-                          time: event.target.checked,
-                        }))
-                      }
-                    />
-                    Time
-                  </label>
-                </div>
-              </details>
+              {!activePlan && (
+                <details className="metrics-menu" ref={metricsMenuRef}>
+                  <summary>Display options</summary>
+                  <div className="metrics-menu-content">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={visibleMetrics.distance}
+                        onChange={(event) =>
+                          setVisibleMetrics((current) => ({
+                            ...current,
+                            distance: event.target.checked,
+                          }))
+                        }
+                      />
+                      Distance
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={visibleMetrics.time}
+                        onChange={(event) =>
+                          setVisibleMetrics((current) => ({
+                            ...current,
+                            time: event.target.checked,
+                          }))
+                        }
+                      />
+                      Time
+                    </label>
+                  </div>
+                </details>
+              )}
             </div>
           </div>
 
@@ -2136,16 +2217,26 @@ export default function HomePage() {
                     <label className="field-label">
                       Race name
                       <input
-                        className="input"
+                        className={`input ${planNameError ? "input-error" : ""}`}
                         value={planForm.raceName}
-                        onChange={(event) =>
+                        aria-invalid={Boolean(planNameError)}
+                        aria-describedby={
+                          planNameError ? "plan-name-error" : undefined
+                        }
+                        onChange={(event) => {
+                          setPlanNameError("");
                           setPlanForm((prev) => ({
                             ...prev,
                             raceName: event.target.value,
-                          }))
-                        }
+                          }));
+                        }}
                         placeholder="e.g. City 10K"
                       />
+                      {planNameError && (
+                        <span id="plan-name-error" className="field-error">
+                          {planNameError}
+                        </span>
+                      )}
                     </label>
                     <div className="form-row">
                       <label className="field-label">
@@ -2153,7 +2244,11 @@ export default function HomePage() {
                         <input
                           className="input"
                           type="date"
+                          min={addDaysToToday(1)}
                           value={planForm.raceDate}
+                          onClick={(event) =>
+                            event.currentTarget.showPicker?.()
+                          }
                           onChange={(event) =>
                             setPlanForm((prev) => ({
                               ...prev,
@@ -2226,17 +2321,27 @@ export default function HomePage() {
                     <label className="field-label">
                       Plan name
                       <input
-                        className="input"
+                        className={`input ${planNameError ? "input-error" : ""}`}
                         value={planForm.generalPlanName}
-                        onChange={(event) =>
+                        aria-invalid={Boolean(planNameError)}
+                        aria-describedby={
+                          planNameError ? "plan-name-error" : undefined
+                        }
+                        onChange={(event) => {
+                          setPlanNameError("");
                           setPlanForm((prev) => ({
                             ...prev,
                             generalPlanName: event.target.value,
-                          }))
-                        }
+                          }));
+                        }}
                         placeholder="e.g. Base building block"
                         required
                       />
+                      {planNameError && (
+                        <span id="plan-name-error" className="field-error">
+                          {planNameError}
+                        </span>
+                      )}
                     </label>
                     <label className="field-label">
                       General goal
@@ -2281,6 +2386,7 @@ export default function HomePage() {
                       <input
                         className="input"
                         type="date"
+                        min={addDaysToToday(1)}
                         value={planForm.planEndDate}
                         onChange={(event) =>
                           setPlanForm((prev) => ({
@@ -2334,6 +2440,34 @@ export default function HomePage() {
                     );
                   })}
                 </div>
+
+                <label className="field-label">
+                  Long-run day (optional)
+                  <select
+                    className="select"
+                    value={planForm.longRunDay}
+                    onChange={(event) =>
+                      setPlanForm((prev) => ({
+                        ...prev,
+                        longRunDay: event.target.value as "" | PlanWeekday,
+                      }))
+                    }
+                  >
+                    <option value="">Choose automatically</option>
+                    {weekdayOptions.map((day) => (
+                      <option
+                        key={day.value}
+                        value={day.value}
+                        disabled={!planForm.weeklySchedule[day.value]}
+                      >
+                        {weekdayNames[day.value]}
+                      </option>
+                    ))}
+                  </select>
+                  <span style={{ fontWeight: 400 }}>
+                    Choose one of your training days, or leave this automatic.
+                  </span>
+                </label>
 
                 <button
                   className="button"

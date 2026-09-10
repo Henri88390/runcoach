@@ -139,6 +139,7 @@ export async function initializeDatabase() {
       general_goal_description TEXT,
       selected_coaches TEXT[] NOT NULL DEFAULT '{}',
       weekly_schedule JSONB NOT NULL DEFAULT '{}',
+      long_run_day TEXT,
       recent_race_distance_km NUMERIC(8, 2),
       recent_race_time_seconds INTEGER,
       status TEXT NOT NULL DEFAULT 'queued',
@@ -158,6 +159,9 @@ export async function initializeDatabase() {
   );
   await pool.query(
     "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS weekly_schedule JSONB NOT NULL DEFAULT '{}'",
+  );
+  await pool.query(
+    "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS long_run_day TEXT",
   );
   await pool.query(
     "ALTER TABLE training_plans ADD COLUMN IF NOT EXISTS recent_race_distance_km NUMERIC(8, 2)",
@@ -358,6 +362,7 @@ type TrainingPlanRow = {
   general_goal_description: string | null;
   selected_coaches: string[];
   weekly_schedule: TrainingPlan["weeklySchedule"];
+  long_run_day: TrainingPlan["longRunDay"] | null;
   recent_race_distance_km: number | string | null;
   recent_race_time_seconds: number | null;
   status: TrainingPlan["status"];
@@ -381,6 +386,7 @@ const mapTrainingPlan = (row: TrainingPlanRow): TrainingPlan => ({
   generalGoalDescription: row.general_goal_description ?? undefined,
   selectedCoaches: row.selected_coaches,
   weeklySchedule: row.weekly_schedule ?? {},
+  longRunDay: row.long_run_day ?? undefined,
   recentRaceDistanceKm:
     row.recent_race_distance_km === null
       ? undefined
@@ -405,9 +411,9 @@ export async function createTrainingPlan(
         id, user_id, name, goal_type, race_name, race_distance_km, goal_date,
         start_date, goal_time_seconds, general_goal_category,
         general_goal_description, selected_coaches, weekly_schedule,
-        recent_race_distance_km, recent_race_time_seconds, status
+        long_run_day, recent_race_distance_km, recent_race_time_seconds, status
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, $9, $10, $11, $12, $13, $14, $15, 'queued')
+      VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8::date, $9, $10, $11, $12, $13, $14, $15, $16, 'queued')
       RETURNING *
     `,
     [
@@ -424,11 +430,20 @@ export async function createTrainingPlan(
       request.generalGoalDescription ?? null,
       request.selectedCoaches ?? [],
       JSON.stringify(request.weeklySchedule ?? {}),
+      request.longRunDay ?? null,
       request.recentRaceDistanceKm ?? null,
       request.recentRaceTimeSeconds ?? null,
     ],
   );
   return mapTrainingPlan(result.rows[0]);
+}
+
+export async function trainingPlanNameExists(name: string, userId: string) {
+  const result = await pool.query(
+    "SELECT 1 FROM training_plans WHERE user_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1",
+    [userId, name],
+  );
+  return result.rows.length > 0;
 }
 
 export async function listTrainingPlans(userId: string) {

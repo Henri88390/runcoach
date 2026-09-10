@@ -100,6 +100,9 @@ export interface TrainingPlanRequest {
   generalGoalDescription?: string;
   selectedCoaches: string[];
   weeklySchedule: WeeklySchedule;
+  longRunDay?: PlanWeekday;
+  /** Average weekly completed distance from the runner's recent history. */
+  recentWeeklyDistanceKm?: number;
   /** Recent race result used to compute VDOT-based training paces. */
   recentRaceDistanceKm?: number;
   recentRaceTimeSeconds?: number;

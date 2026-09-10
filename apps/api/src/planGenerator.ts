@@ -95,21 +95,59 @@ function resolveVdot(request: TrainingPlanRequest): number {
   return DEFAULT_VDOT;
 }
 
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function recommendedWeeklyDistance(
+  request: TrainingPlanRequest,
+  availableSessions: number,
+  currentVdot: number,
+): number {
+  const goalVdot =
+    request.goalType === "precise" &&
+    request.raceDistanceKm &&
+    request.goalTimeSeconds
+      ? calculateVDOT(request.raceDistanceKm, request.goalTimeSeconds)
+      : currentVdot;
+  const performanceDemand = Math.max(0, currentVdot - 35) * 0.7;
+  const ambitionDemand = clamp(goalVdot - currentVdot, 0, 15) * 1.3;
+  const raceDemand =
+    request.goalType === "precise" ? (request.raceDistanceKm ?? 0) * 0.6 : 6;
+  const recommended =
+    availableSessions * 5 + performanceDemand + ambitionDemand + raceDemand;
+
+  return Math.round(
+    clamp(recommended, availableSessions * 6, availableSessions * 18),
+  );
+}
+
 /** Approximate %VDOT effort for each training zone (Daniels & Gilbert). */
 /**
  * Daniels & Gilbert's %VDOT effort range for each training zone (not a single
- * point). Easy/long is genuinely a wide 59-74% band; reporting only the fast
- * edge (e.g. a flat 70%) makes "easy" look faster than it typically is.
+ * point). Easy and recovery ranges deliberately favor the slower end so the
+ * planned pace does not turn an aerobic day into a moderate workout.
  */
 const ZONE_PERCENT_VDOT: Partial<Record<WorkoutType, [number, number]>> = {
-  recovery: [0.55, 0.64],
-  easy: [0.59, 0.74],
-  long: [0.59, 0.74],
+  recovery: [0.48, 0.58],
+  easy: [0.52, 0.68],
+  long: [0.54, 0.7],
   tempo: [0.79, 0.84],
   threshold: [0.86, 0.9],
   vo2max: [0.95, 1],
   interval: [0.95, 1],
   race: [1, 1],
+};
+
+const HEART_RATE_TARGETS: Partial<Record<WorkoutType, string>> = {
+  recovery: "Zone 1 (50-60% max HR)",
+  easy: "Zone 2 (60-70% max HR)",
+  long: "Zone 2 (60-70% max HR)",
+  tempo: "Zone 3 (70-80% max HR)",
+  threshold: "Zone 4 (80-90% max HR)",
+  vo2max: "Zone 5 (90-100% max HR)",
+  interval: "Zone 5 (90-100% max HR)",
+  race: "Zones 4-5 (80-100% max HR)",
 };
 
 /** Single representative pace for scheduling: the middle of the zone's %VDOT range. */
@@ -136,8 +174,9 @@ const INTENT_BY_TYPE: Partial<Record<WorkoutType, string>> = {
 };
 
 function formatPace(secPerKm: number): string {
-  const minutes = Math.floor(secPerKm / 60);
-  const seconds = Math.round(secPerKm % 60);
+  const totalSeconds = Math.round(secPerKm);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
@@ -198,6 +237,7 @@ function composeNotes(parts: {
   phaseLabel?: string;
   intent?: string;
   paceTarget?: string;
+  heartRateTarget?: string;
   structure?: string;
   coachNote: string;
 }): string {
@@ -205,6 +245,7 @@ function composeNotes(parts: {
     parts.phaseLabel ? `${parts.phaseLabel} phase.` : undefined,
     parts.intent,
     parts.paceTarget ? `Target pace: ${parts.paceTarget}.` : undefined,
+    parts.heartRateTarget ? `Heart rate: ${parts.heartRateTarget}.` : undefined,
     parts.structure ? `Workout: ${parts.structure}.` : undefined,
     parts.coachNote,
   ]
@@ -326,16 +367,31 @@ export function generatePlanWorkouts(
   const note = coachNote(request.selectedCoaches);
   const vdot = resolveVdot(request);
 
-  const baseWeeklyKm =
-    request.goalType === "precise" && request.raceDistanceKm
-      ? Math.max(20, request.raceDistanceKm * 4)
-      : request.generalGoalCategory === "maintenance"
-        ? 30
-        : 35;
-
   const scheduleDays = scheduleOffsets(request.weeklySchedule);
-  const longEntry = scheduleDays[scheduleDays.length - 1];
-  const otherDays = scheduleDays.slice(0, -1);
+  const availableSessions = scheduleDays.reduce(
+    (total, day) => total + (day.doubles ? 2 : 1),
+    0,
+  );
+  const targetWeeklyKm = recommendedWeeklyDistance(
+    request,
+    availableSessions,
+    vdot,
+  );
+  const startingWeeklyKm = request.recentWeeklyDistanceKm
+    ? Math.round(
+        clamp(
+          request.recentWeeklyDistanceKm,
+          Math.max(10, targetWeeklyKm * 0.5),
+          targetWeeklyKm * 1.25,
+        ),
+      )
+    : Math.round(targetWeeklyKm * 0.65);
+  const longEntry = request.longRunDay
+    ? (scheduleDays.find(
+        (day) => day.offset === WEEKDAY_OFFSET[request.longRunDay!],
+      ) ?? scheduleDays[scheduleDays.length - 1])
+    : scheduleDays[scheduleDays.length - 1];
+  const otherDays = scheduleDays.filter((day) => day !== longEntry);
 
   const startMonday = mondayOf(effectiveStart);
   const workouts: Workout[] = [];
@@ -345,6 +401,10 @@ export function generatePlanWorkouts(
     const weekStart = addDays(startMonday, week * 7);
     const weeksRemaining = totalWeeks - week;
     const isTaperWeek = weeksRemaining <= 1;
+    const isRaceWeek =
+      request.goalType === "precise" &&
+      goalDate >= weekStart &&
+      goalDate < addDays(weekStart, 7);
     const isPeakWeek =
       !isTaperWeek &&
       weeksRemaining <= Math.max(2, Math.round(totalWeeks * 0.2));
@@ -353,15 +413,19 @@ export function generatePlanWorkouts(
       !isPeakWeek &&
       weeksRemaining <= Math.max(3, Math.round(totalWeeks * 0.5));
 
-    const progress = Math.min(1, week / Math.max(1, totalWeeks - 1));
-    const weekVolumeMultiplier = isTaperWeek
-      ? 0.6
-      : isPeakWeek
-        ? 1.05
-        : 0.7 + progress * 0.3;
+    const progression = Math.min(1, week / Math.max(1, totalWeeks - 2));
+    const desiredWeeklyKm =
+      startingWeeklyKm + (targetWeeklyKm - startingWeeklyKm) * progression;
+    const safeUpperBound = startingWeeklyKm * 1.08 ** week;
+    const safeLowerBound = startingWeeklyKm * 0.9 ** week;
+    const progressedWeeklyKm = clamp(
+      desiredWeeklyKm,
+      safeLowerBound,
+      safeUpperBound,
+    );
     const weeklyKm = Math.max(
       10,
-      Math.round(baseWeeklyKm * weekVolumeMultiplier),
+      Math.round(isTaperWeek ? progressedWeeklyKm * 0.6 : progressedWeeklyKm),
     );
 
     const phaseLabel = isTaperWeek
@@ -382,10 +446,10 @@ export function generatePlanWorkouts(
       ...buildOtherSessions(otherDays, qualityType),
       {
         offset: longEntry.offset,
-        type: "long",
-        shareOfWeek: 0.3,
-        effort: "moderate",
-        doubles: longEntry.doubles,
+        type: isRaceWeek ? "easy" : "long",
+        shareOfWeek: isRaceWeek ? 0.12 : 0.3,
+        effort: isRaceWeek ? "easy" : "moderate",
+        doubles: isRaceWeek ? false : longEntry.doubles,
       },
     ];
 
@@ -399,6 +463,7 @@ export function generatePlanWorkouts(
 
       sessionIndex += 1;
       const paceTarget = paceTargetFor(session.type, vdot);
+      const heartRateTarget = HEART_RATE_TARGETS[session.type];
 
       let distanceKm = rawDistanceKm;
       let durationMinutes: number;
@@ -457,6 +522,7 @@ export function generatePlanWorkouts(
           phaseLabel,
           intent: INTENT_BY_TYPE[session.type],
           paceTarget,
+          heartRateTarget,
           structure,
           coachNote: note,
         }),
@@ -491,6 +557,7 @@ export function generatePlanWorkouts(
             intent:
               "Second easy shakeout run to add volume without adding another training day.",
             paceTarget: doublePaceTarget,
+            heartRateTarget: HEART_RATE_TARGETS.recovery,
             coachNote: note,
           }),
           source: "plan",
@@ -523,6 +590,7 @@ export function generatePlanWorkouts(
     notes: composeNotes({
       intent: `Goal day: ${request.raceName ?? "target goal"}.`,
       paceTarget: goalPace,
+      heartRateTarget: HEART_RATE_TARGETS.race,
       coachNote: note,
     }),
     source: "plan",

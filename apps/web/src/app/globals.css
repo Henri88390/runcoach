@@ -820,6 +820,16 @@ main {
   padding: 10px 12px;
 }
 
+.input.input-error {
+  border-color: var(--danger);
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
 .select {
   appearance: none;
   padding-right: 38px;
